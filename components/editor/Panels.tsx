@@ -70,7 +70,13 @@ export function PanelBody({ id, plan, services, onUpsell }: { id: PanelId; plan:
               <button
                 key={r}
                 className="rig-card"
-                onClick={() => (locked ? onUpsell("Unlock every character with Storyteller") : s.addElement(newCharacter(r, d.width / 2, d.height * 0.66)))}
+                onClick={() => {
+                  if (locked) return onUpsell("Unlock every character with Storyteller");
+                  // spread characters across the page so new ones don't hide old ones
+                  const n = page.elements.filter((e) => e.type === "character").length;
+                  const slots = [0.5, 0.28, 0.72, 0.4, 0.6];
+                  s.addElement(newCharacter(r, d.width * slots[n % slots.length], d.height * 0.66));
+                }}
               >
                 <span className="rig-emoji">{RIG_INFO[r].emoji}</span>
                 {RIG_INFO[r].label}
@@ -93,7 +99,11 @@ export function PanelBody({ id, plan, services, onUpsell }: { id: PanelId; plan:
               className="thumb sticker"
               onClick={async () => {
                 const img = await loadImage(st.src);
-                s.addElement(newImage(st.src, d.width, d.height, { w: img.width, h: img.height }));
+                const el = newImage(st.src, d.width, d.height, { w: img.width, h: img.height });
+                // drop near the top, nudged so repeated taps don't stack exactly
+                el.x = Math.min(d.width - el.width - d.safe, Math.max(d.safe, el.x + (Math.random() - 0.5) * d.width * 0.4));
+                el.y = d.safe + Math.random() * d.height * 0.15;
+                s.addElement(el);
               }}
             >
               <img src={assetUrl(st.src)} alt={st.name} loading="lazy" />
