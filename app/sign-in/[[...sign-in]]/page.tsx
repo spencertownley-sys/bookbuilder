@@ -9,7 +9,7 @@ export default function Page() {
       </div>
       <div className="auth-form">
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-          <Link href="/" className="brand">📖 Book<b>ling</b></Link>
+          <Link href="/" className="brand">📖 Book<b>Builder</b></Link>
           <SignIn />
         </div>
       </div>

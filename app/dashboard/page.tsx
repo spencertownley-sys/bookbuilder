@@ -3,7 +3,7 @@ import SiteNav from "@/components/SiteNav";
 import { getCurrentPlan } from "@/lib/plan-server";
 import ShelfClient from "./ShelfClient";
 
-export const metadata = { title: "My books — Bookling" };
+export const metadata = { title: "My books — Book Builder" };
 
 export default async function Dashboard() {
   const { userId } = await auth();

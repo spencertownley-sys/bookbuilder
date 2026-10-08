@@ -2,8 +2,8 @@
 import { forwardRef, useEffect, useRef, useState } from "react";
 import { Stage, Layer, Rect, Image as KImage, Text, Group, Transformer, Line, Label, Tag } from "react-konva";
 import type Konva from "konva";
-import type { Book, El, Page, TextEl, ImageEl, CharacterEl } from "@/lib/book";
-import { pageDims } from "@/lib/book";
+import type { Book, El, Hero, Page, TextEl, ImageEl, CharacterEl } from "@/lib/book";
+import { applyHero, fillTokens, pageDims } from "@/lib/book";
 import { coverCrop, useImage } from "@/lib/images";
 import { CharacterBody } from "./CharacterShape";
 
@@ -31,14 +31,24 @@ function Background({ page, w, h }: { page: Page; w: number; h: number }) {
   );
 }
 
-function ImageNode({ el, common }: { el: ImageEl; common: object }) {
-  const img = useImage(el.src);
+function ImageNode({ el, common, hero, editing }: { el: ImageEl; common: object; hero?: Hero; editing?: boolean }) {
+  const emptySlot = el.slot === "heroPhoto" && !hero?.photo;
+  const isPhoto = el.slot === "heroPhoto" && !!hero?.photo;
+  const img = useImage(emptySlot && !editing ? undefined : isPhoto ? hero!.photo : el.src);
+  if (emptySlot && !editing) return null; // the "add a photo" placeholder never prints or shows to readers
   return (
     <KImage
       {...common}
       image={img ?? undefined}
       width={el.width}
       height={el.height}
+      crop={isPhoto && img ? coverCrop(img, el.width, el.height) : undefined}
+      stroke={isPhoto ? "#FFFFFF" : undefined}
+      strokeWidth={isPhoto ? 18 : 0}
+      shadowColor={isPhoto ? "#000" : undefined}
+      shadowOpacity={isPhoto ? 0.18 : 0}
+      shadowBlur={isPhoto ? 16 : 0}
+      shadowOffsetY={isPhoto ? 6 : 0}
       scaleX={el.flipX ? -1 : 1}
       offsetX={el.flipX ? el.width : 0}
     />
@@ -49,9 +59,9 @@ function fontStyle(t: TextEl) {
   return `${t.italic ? "italic " : ""}${t.bold ? "bold" : "normal"}`;
 }
 
-function TextNode({ el, common, hidden }: { el: TextEl; common: object; hidden: boolean }) {
+function TextNode({ el, common, hidden, hero }: { el: TextEl; common: object; hidden: boolean; hero?: Hero }) {
   const textProps = {
-    text: el.text,
+    text: fillTokens(el.text, hero),
     width: el.width,
     fontFamily: el.fontFamily,
     fontSize: el.fontSize,
@@ -70,6 +80,14 @@ function TextNode({ el, common, hidden }: { el: TextEl; common: object; hidden: 
       <Label {...common}>
         <Tag fill="#FFFFFF" stroke="#2A363B" strokeWidth={4} cornerRadius={28} pointerDirection="down" pointerWidth={36} pointerHeight={30} opacity={hidden ? 0 : 1} />
         <Text {...textProps} padding={24} />
+      </Label>
+    );
+  }
+  if (el.backdrop) {
+    return (
+      <Label {...common}>
+        <Tag fill="#FFFDF7" cornerRadius={26} opacity={hidden ? 0 : 0.88} />
+        <Text {...textProps} padding={22} />
       </Label>
     );
   }
@@ -190,11 +208,11 @@ const PageStage = forwardRef<Konva.Stage, PageStageProps>(function PageStage(
             onDblClick: () => el.type === "text" && onEditText?.(el),
             onDblTap: () => el.type === "text" && onEditText?.(el),
           };
-          if (el.type === "image") return <ImageNode key={el.id} el={el} common={common} />;
-          if (el.type === "text") return <TextNode key={el.id} el={el} common={common} hidden={editingId === el.id} />;
+          if (el.type === "image") return <ImageNode key={el.id} el={el} common={common} hero={book.hero} editing={interactive} />;
+          if (el.type === "text") return <TextNode key={el.id} el={el} common={common} hidden={editingId === el.id} hero={book.hero} />;
           return (
             <Group key={el.id} {...common} scaleX={el.flipX ? -el.scale : el.scale} scaleY={el.scale}>
-              <CharacterBody el={el} />
+              <CharacterBody el={applyHero(el, book.hero)} />
             </Group>
           );
         })}
@@ -227,7 +245,7 @@ const PageStage = forwardRef<Konva.Stage, PageStageProps>(function PageStage(
           {snap.h && <Line points={[0, d.height / 2, d.width, d.height / 2]} stroke="#FF4FA3" strokeWidth={2 / scale} />}
           {watermark && (
             <Text
-              text="Made with Bookling · free plan"
+              text="Made with Book Builder · free plan"
               x={0}
               y={d.height - d.safe - 10}
               width={d.width}

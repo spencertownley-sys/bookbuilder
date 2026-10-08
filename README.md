@@ -1,30 +1,27 @@
-# Bookling 📖
+# Book Builder 📖
 
-Make a children's picture book as easily as a Canva design — pick a scene, drop in posable characters, write your words, then print one copy or publish it.
+Make a personalized children's picture book in an afternoon: pick a story, star your child, tweak any page, share it with family, and order a printed hardcover.
 
-**Stack:** Next.js 16 · React 19 · Clerk (login) · Stripe (payments) · Konva (canvas editor) · jsPDF (print files)
-**Starter art:** 12 backgrounds + 8 stickers generated with Higgsfield (`public/templates`).
+**Stack:** Next.js 16 · React 19 · Clerk (login) · Postgres (Supabase or any) · Supabase Storage · Stripe · Lulu Print API · Konva (editor) · jsPDF (print files)
+
+Working name: "Book Builder". The brand lives in `components/SiteNav.tsx`, `app/layout.tsx` and a few page titles.
 
 ---
 
-## What's built
+## What's in the launch release
 
-| Area | What works today |
+| Feature | Where |
 |---|---|
-| **Editor** | Drag/resize/rotate anything, snap-to-center guides, undo/redo, layers, duplicate, lock, keyboard shortcuts, phone layout with bottom sheets |
-| **Scenes** | 12 painted backgrounds + plain colors, "cover" fit for any trim size |
-| **Characters** | Vector rigs (kid, bear, bunny, cat, robot). 12 pose presets + per-joint sliders (lean, head, elbows, knees…), 5 faces, hair styles, skin tones, outfit colors, flip |
-| **Text** | 10 kid-friendly OFL fonts, size, color, bold/italic, alignment, outline, speech bubbles, line spacing, double-click to edit on the page |
-| **Stickers & uploads** | 8 cut-out stickers, "Surprise me", upload drawings/photos |
-| **AI art** | `/api/ai-image` — fal.ai FLUX (cheapest) or OpenAI gpt-image-1, kid-safe prompt wrapper, monthly quota per plan |
-| **Read it** | Page-flip preview with swipe + browser read-aloud |
-| **Export** | Full-bleed interior PDF (300 dpi on paid, 150 dpi + watermark on free), paperback cover wrap with spine, single page image |
-| **Publish** | Links + notes for KDP, Lulu, IngramSpark, B&N Press, Draft2Digital, Blurb, BookBaby, Apple, Kobo, Google Play; AI-disclosure reminder |
-| **Print a copy** | `/api/print-order` — Lulu Print API (needs PDF storage, see below) |
-| **Accounts** | Clerk sign-in/up with branded pages, protected routes via `proxy.ts`, plan stored in Clerk metadata |
-| **Plans** | Free / $4.99 / $9.99 (+ yearly, + one-time add-ons) in `lib/plans.ts`; Stripe Checkout, Billing Portal and webhook |
+| **Cloud save**: books live in Postgres, autosave ~1 s after each change, "Saved" pill, two-device conflict warning, one-time import of books from the old browser-only version | `lib/sync.ts`, `app/api/books/*` |
+| **Star your child**: name, pronouns, skin, hair, favorite color, dedication photo. Text uses `{name}`, `{they}`, `{them}`, `{their}`… (capitalize for sentence starts). Hero characters take the hero's look on every page; one undoable change | `lib/book.ts` (`fillTokens`, `applyHero`), `components/HeroForm.tsx` |
+| **6 story starters**: Birthday, First Day of School, New Baby Sibling, Bedtime Adventure, Grandparents' Love, Holiday Magic. 24 pages each (cover, dedication, 22 story pages) | `lib/starters.ts` (add more as data) |
+| **Family share link**: public flipbook at `/read/<token>`, hearts + notes, revocable, no sign-in, not indexed | `app/read`, `app/api/share/*` |
+| **Voice recording**: per-page narration up to 60 s (author or via a "record" invite link at `/record/<token>`); plays in the reader | `components/Recorder.tsx`, `lib/recordings.ts` |
+| **Print guardrails**: empty pages, text outside the safe area, low-res images, unfilled `{name}`, page count, AI-disclosure reminder. ⛔ blocks, ⚠️ must be accepted | `lib/checks.ts` |
+| **Keepsake unlock**: $6 one-time, per book: print-ready 300 dpi, no watermark | `app/api/checkout` |
+| **Printed copies**: hardcover/paperback, quote, Stripe checkout, files rendered in the browser and uploaded straight to storage, job sent to Lulu after payment, order page with status + tracking from Lulu's webhook | `app/api/orders/*`, `lib/lulu.ts`, `lib/fulfill.ts`, `app/orders` |
 
-Books are saved in the browser per user (localStorage). Cloud sync is the next step (see Roadmap).
+Plus everything from the prototype: Canva-style editor, posable characters, text tools, Higgsfield starter art, plans, KDP files and publisher links.
 
 ---
 
@@ -32,58 +29,61 @@ Books are saved in the browser per user (localStorage). Cloud sync is the next s
 
 ```bash
 npm install
-cp .env.example .env.local     # skip if you received .env.local with the project
-npm run dev                     # http://localhost:3000
+cp .env.example .env.local   # then add your Clerk keys, or run `npx clerk init` for instant dev keys
+npm run db                   # terminal 1: local Postgres on port 54329 (data in .data/)
+npm run db:migrate           # once: creates the tables
+npm run dev                  # terminal 2: http://localhost:3000
 ```
 
-### 1. Clerk (login)
-This project was initialised with Clerk's **accountless dev keys** — login already works locally with no account.
-To make the app yours:
-```bash
-npx clerk auth login            # claims the dev app into your Clerk account automatically
-```
-In the Clerk dashboard turn on Google / Apple sign-in and email codes. For production, create a prod instance and set the `pk_live`/`sk_live` keys in Vercel.
-
-### 2. Stripe (payments)
-1. Create products: **Storyteller** ($4.99/mo, $39/yr), **Publisher** ($9.99/mo, $79/yr), **AI pack** ($3 one-time), **Keepsake unlock** ($6 one-time).
-2. Paste each Price ID into `.env.local` (`STRIPE_PRICE_*`).
-3. Add a webhook → `https://YOUR_DOMAIN/api/webhooks/stripe` with `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`. Locally: `stripe listen --forward-to localhost:3000/api/webhooks/stripe`.
-4. In **Settings → Payment methods** switch on Apple Pay, Google Pay, Link, PayPal, Cash App, Klarna — one integration, many ways to pay.
-
-### 3. AI illustrations
-`AI_IMAGE_PROVIDER=fal` + `FAL_KEY` (cheapest), or `openai` + `OPENAI_API_KEY` (transparent stickers).
-
-### 4. Printed copies (optional)
-Get sandbox keys at developers.lulu.com. Lulu needs public URLs for the PDFs, so add storage (Vercel Blob or Cloudflare R2), upload the exported files, then call `/api/print-order`.
+With `DEV_FAKE_PAYMENTS=1` and no Stripe key, the Keepsake unlock and print orders succeed instantly, and the Orders page has buttons that simulate the printer's status updates. This only happens in development.
 
 ---
 
-## Put it on GitHub
+## Going live
 
-```bash
-git remote add origin https://github.com/<you>/bookling.git
-git push -u origin main
-```
-`.env.local` and `.clerk/` are git-ignored — keep them that way.
+### 1. Database + storage (Supabase)
+Your Supabase free plan already has 2 active projects, so pause one or upgrade before creating `bookbuilder`. Then:
+1. **Database:** Project → Connect → copy the **Transaction pooler** URL into `DATABASE_URL`, then run `npm run db:migrate`. Any Postgres works (Neon, Vercel Postgres).
+2. **Storage:** Storage → New bucket `media`, **private**, file size limit 100 MB. Copy the project URL and **service role** key into `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`. The service key stays on the server only.
+3. Row-level security is on for every table with no public policies; all access goes through the app's server.
 
-## Deploy
-Import the repo in Vercel, add the env vars from `.env.example`, deploy. Point a domain at it and set `NEXT_PUBLIC_APP_URL`.
+### 2. Clerk
+`npx clerk auth login` claims the dev instance. For production create a prod instance on your domain and set the live keys.
+
+### 3. Stripe
+1. Products: Storyteller ($4.99/mo, $39/yr), Publisher ($9.99/mo, $79/yr), AI pack ($3), Keepsake unlock ($6). Paste the Price IDs into `STRIPE_PRICE_*`. Printed copies use dynamic prices, so they need no product.
+2. Webhook → `https://YOUR_DOMAIN/api/webhooks/stripe` with `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`.
+3. Turn on Stripe Tax and set `STRIPE_AUTOMATIC_TAX=true` (sales tax on printed books).
+4. Remove `DEV_FAKE_PAYMENTS` in production (it's ignored there anyway).
+
+### 4. Lulu (printing)
+1. Sandbox first: developers.sandbox.lulu.com → API keys into `LULU_CLIENT_KEY/SECRET`, `LULU_API_BASE=https://api.sandbox.lulu.com`.
+2. Register the status webhook once:
+   `POST /webhooks/ {"topics":["PRINT_JOB_STATUS_CHANGED"],"url":"https://YOUR_DOMAIN/api/webhooks/lulu"}`
+3. Lulu fetches print files from `NEXT_PUBLIC_APP_URL/api/media/...`, so the app must be on a public URL (not localhost) for real orders.
+4. Before launch, print one real copy and check it by hand. Product IDs live in `lib/printing.ts` (8.5" square, standard color, gloss).
+
+### 5. AI art
+`AI_IMAGE_PROVIDER=fal` + `FAL_KEY` (cheapest) or `openai` + `OPENAI_API_KEY`. Generated images are copied into storage, since provider links expire.
+
+### 6. Hosting (Vercel)
+Import the repo, add every variable from `.env.example`, and set `NEXT_PUBLIC_APP_URL` to your domain. Print PDFs upload straight to Supabase Storage, so Vercel's 4.5 MB request limit doesn't apply.
 
 ---
+
+## Known limits
+- **Template art resolution:** the Higgsfield backgrounds are 1024 px, about 117 dpi at full page. They look soft in print. Upscaling all 12 to print size costs about 24 Higgsfield credits.
+- **Printed copies are 8.5" square only.** The other trim sizes are for downloads/KDP.
+- **Hardcover cover wrap:** with Lulu connected, the exact cover size comes from Lulu's `/cover-dimensions/`. Without Lulu the dev preview uses an estimate.
+- **Saddle-stitch paperbacks** (≤ 48 pages) are padded to a multiple of 4 pages with blank pages at the end.
 
 ## Project map
 ```
-app/                 pages + API routes (checkout, billing-portal, webhooks/stripe, ai-image, print-order)
-components/editor/   Editor shell, PageStage (canvas), CharacterShape (rig), Panels, Inspector
-lib/                 book model & poses, store (undo/redo), plans, publishers, fonts, templates, export
-proxy.ts             Clerk route protection (Next 16 name for middleware)
-public/templates/    Higgsfield starter art
-scripts/build-demo.mjs  single-file demo build of the editor
+app/                     pages, API routes (books, share, orders, uploads, media, webhooks)
+components/editor/       Editor, PageStage, CharacterShape, Panels, Inspector, FamilyPanel, PrintDialog, Dialogs
+components/              HeroForm, Recorder, SiteNav
+lib/                     book model, starters, checks, export, sync, store, printing, lulu, fulfill, storage, db
+db/schema.sql            tables (npm run db:migrate)
+scripts/                 dev database, migrations, demo build
+public/templates/        Higgsfield starter art
 ```
-
-## Roadmap
-1. Cloud save (Supabase/Postgres) + share links for family "read along"
-2. Personalization fields: `{childName}` + photo swap → one template, thousands of unique keepsakes
-3. More rigs/outfits, multi-character scenes, consistent AI characters
-4. Narrated video export and animated pages
-5. EPUB fixed-layout export for Apple/Kobo

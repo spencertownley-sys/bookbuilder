@@ -4,13 +4,13 @@ import { GOOGLE_FONTS_HREF } from "@/lib/fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Bookling — make a children's book in minutes",
+  title: "Book Builder — make a children's book in minutes",
   description: "Drag, drop and pose characters, add your words, and print or publish a real picture book.",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, maximumScale: 1 };
 
-// The "unique login" look: Clerk's components pick up the Bookling palette and fonts.
+// The "unique login" look: Clerk's components pick up the Book Builder palette and fonts.
 const appearance = {
   variables: {
     colorPrimary: "#7C4DFF",

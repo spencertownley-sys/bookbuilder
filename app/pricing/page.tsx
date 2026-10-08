@@ -1,7 +1,7 @@
 import SiteNav from "@/components/SiteNav";
 import PricingClient from "./PricingClient";
 
-export const metadata = { title: "Pricing — Bookling" };
+export const metadata = { title: "Pricing — Book Builder" };
 
 export default function Pricing() {
   return (

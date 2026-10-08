@@ -4,6 +4,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { stripe } from "@/lib/stripe";
 import { setUserPlan } from "@/lib/plan-server";
 import { PlanId } from "@/lib/plans";
+import { markOrderPaid, unlockKeepsake } from "@/lib/fulfill";
 
 // Point a Stripe webhook at /api/webhooks/stripe with these events:
 // checkout.session.completed, customer.subscription.updated, customer.subscription.deleted
@@ -25,18 +26,18 @@ export async function POST(req: Request) {
       const userId = s.metadata?.userId || s.client_reference_id;
       if (!userId) break;
       const customer = typeof s.customer === "string" ? s.customer : s.customer?.id;
-      if (s.mode === "subscription" && s.metadata?.planId) {
+      if (s.payment_status !== "paid" && s.payment_status !== "no_payment_required") break;
+      if (s.metadata?.kind === "order" && s.metadata.orderId) {
+        await markOrderPaid(s.metadata.orderId, s.id);
+      } else if (s.metadata?.addOnId === "keepsake" && s.metadata.bookId) {
+        await unlockKeepsake(s.metadata.bookId);
+      } else if (s.mode === "subscription" && s.metadata?.planId) {
         await setUserPlan(userId, s.metadata.planId as PlanId, customer);
       } else if (s.metadata?.addOnId === "ai-pack-50") {
         const client = await clerkClient();
         const u = await client.users.getUser(userId);
         const bonus = ((u.privateMetadata as { aiBonus?: number }).aiBonus ?? 0) + 50;
         await client.users.updateUserMetadata(userId, { privateMetadata: { aiBonus: bonus } });
-      } else if (s.metadata?.addOnId === "keepsake") {
-        const client = await clerkClient();
-        const u = await client.users.getUser(userId);
-        const credits = ((u.publicMetadata as { keepsakeCredits?: number }).keepsakeCredits ?? 0) + 1;
-        await client.users.updateUserMetadata(userId, { publicMetadata: { keepsakeCredits: credits } });
       }
       break;
     }

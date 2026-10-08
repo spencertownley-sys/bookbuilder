@@ -4,7 +4,7 @@ import { Show, UserButton } from "@clerk/nextjs";
 export default function SiteNav() {
   return (
     <nav className="site-nav">
-      <Link href="/" className="brand">📖 Book<b>ling</b></Link>
+      <Link href="/" className="brand">📖 Book<b>Builder</b></Link>
       <span className="spacer" />
       <Link href="/pricing" className="link">Pricing</Link>
       <Show when="signed-out">

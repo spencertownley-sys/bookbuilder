@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useCurrent, useStore } from "@/lib/store";
 import { FONTS } from "@/lib/fonts";
 import {
-  CharacterEl, El, Expression, HairStyle, Joint, JOINT_LABELS, PALETTE, POSES, SKIN_TONES, TextEl,
+  CharacterEl, El, Expression, HairStyle, Joint, JOINT_LABELS, PALETTE, POSES, SKIN_TONES, TextEl, TOKEN_HELP,
 } from "@/lib/book";
 
 function Slider({ label, value, min, max, step = 1, onStart, onChange }: {
@@ -28,8 +28,8 @@ function Swatches({ colors, value, onPick }: { colors: string[]; value?: string;
   );
 }
 
-export default function Inspector({ onClose }: { onClose?: () => void }) {
-  const { page } = useCurrent();
+export default function Inspector({ onClose, onEditHero }: { onClose?: () => void; onEditHero?: () => void }) {
+  const { page, book } = useCurrent();
   const s = useStore();
   const el = page?.elements.find((e) => e.id === s.selectedId);
   if (!el) return null;
@@ -39,7 +39,7 @@ export default function Inspector({ onClose }: { onClose?: () => void }) {
   return (
     <div className="inspector">
       <div className="insp-head">
-        <strong>{el.type === "text" ? "Text" : el.type === "character" ? (el as CharacterEl).name : "Image"}</strong>
+        <strong>{el.type === "text" ? "Text" : el.type === "character" ? ((el as CharacterEl).isHero ? `⭐ ${book?.hero?.name || "Hero"}` : (el as CharacterEl).name) : "Image"}</strong>
         {onClose && <button className="icon" onClick={onClose} aria-label="Close">✕</button>}
       </div>
       <div className="row-actions">
@@ -51,7 +51,7 @@ export default function Inspector({ onClose }: { onClose?: () => void }) {
         <button className="danger" onClick={() => s.deleteElement(el.id)} title="Delete">🗑</button>
       </div>
       {el.type === "text" && <TextInspector el={el} upd={upd} checkpoint={checkpoint} />}
-      {el.type === "character" && <CharacterInspector el={el} upd={upd} checkpoint={checkpoint} />}
+      {el.type === "character" && <CharacterInspector el={el} upd={upd} checkpoint={checkpoint} onEditHero={onEditHero} />}
       {el.type !== "character" && (
         <Slider label="Rotate" value={Math.round(el.rotation)} min={-180} max={180} onStart={checkpoint} onChange={(v) => upd({ rotation: v }, false)} />
       )}
@@ -60,9 +60,20 @@ export default function Inspector({ onClose }: { onClose?: () => void }) {
 }
 
 function TextInspector({ el, upd, checkpoint }: { el: TextEl; upd: (p: Partial<El>, c?: boolean) => void; checkpoint: () => void }) {
+  const insert = (token: string) => {
+    const ta = document.getElementById("text-editor") as HTMLTextAreaElement | null;
+    const at = ta?.selectionStart ?? el.text.length;
+    upd({ text: el.text.slice(0, at) + token + el.text.slice(ta?.selectionEnd ?? at) });
+  };
   return (
     <div className="insp-body">
       <textarea id="text-editor" value={el.text} rows={3} onFocus={checkpoint} onChange={(e) => upd({ text: e.target.value }, false)} />
+      <div className="token-row">
+        <span className="hint">Insert:</span>
+        {["{name}", "{they}", "{them}", "{their}"].map((t) => (
+          <button key={t} className="token" onClick={() => insert(t)} title={TOKEN_HELP}>{t}</button>
+        ))}
+      </div>
       <select value={el.fontFamily} onChange={(e) => upd({ fontFamily: e.target.value })} style={{ fontFamily: el.fontFamily }}>
         {FONTS.map((f) => (
           <option key={f.family} value={f.family} style={{ fontFamily: f.family }}>{f.label}</option>
@@ -84,7 +95,8 @@ function TextInspector({ el, upd, checkpoint }: { el: TextEl; upd: (p: Partial<E
       <Swatches colors={PALETTE} value={el.fill} onPick={(c) => upd({ fill: c })} />
       <div className="seg">
         <button className={el.outline ? "on" : ""} onClick={() => upd({ outline: el.outline ? undefined : "#FFFFFF" })}>Outline</button>
-        <button className={el.bubble ? "on" : ""} onClick={() => upd({ bubble: !el.bubble })}>💬 Bubble</button>
+        <button className={el.bubble ? "on" : ""} onClick={() => upd({ bubble: !el.bubble, backdrop: false })}>💬 Bubble</button>
+        <button className={el.backdrop ? "on" : ""} onClick={() => upd({ backdrop: !el.backdrop, bubble: false })}>▭ Panel</button>
       </div>
       {el.outline && <Swatches colors={PALETTE} value={el.outline} onPick={(c) => upd({ outline: c })} />}
       <Slider label="Line spacing" value={el.lineHeight} min={0.8} max={2.2} step={0.05} onStart={checkpoint} onChange={(v) => upd({ lineHeight: v }, false)} />
@@ -92,12 +104,25 @@ function TextInspector({ el, upd, checkpoint }: { el: TextEl; upd: (p: Partial<E
   );
 }
 
-function CharacterInspector({ el, upd, checkpoint }: { el: CharacterEl; upd: (p: Partial<El>, c?: boolean) => void; checkpoint: () => void }) {
+function CharacterInspector({ el, upd, checkpoint, onEditHero }: { el: CharacterEl; upd: (p: Partial<El>, c?: boolean) => void; checkpoint: () => void; onEditHero?: () => void }) {
   const [fine, setFine] = useState(false);
   const setColor = (k: keyof CharacterEl["colors"], c: string) => upd({ colors: { ...el.colors, [k]: c } } as Partial<El>);
+  const hero = !!el.isHero;
   return (
     <div className="insp-body">
-      <input value={el.name} onChange={(e) => upd({ name: e.target.value } as Partial<El>, false)} onFocus={checkpoint} placeholder="Character name" />
+      {el.rig === "kid" && (
+        <label className="hero-toggle">
+          <input type="checkbox" checked={hero} onChange={(e) => upd({ isHero: e.target.checked } as Partial<El>)} /> This is the hero
+        </label>
+      )}
+      {hero ? (
+        <div className="hero-note">
+          <p className="hint">Name, skin, hair and shirt come from Star your child, so the hero looks the same on every page.</p>
+          {onEditHero && <button className="btn ghost wide" onClick={onEditHero}>⭐ Edit the hero</button>}
+        </div>
+      ) : (
+        <input value={el.name} onChange={(e) => upd({ name: e.target.value } as Partial<El>, false)} onFocus={checkpoint} placeholder="Character name" />
+      )}
       <h4>Pose</h4>
       <div className="pose-grid">
         {Object.entries(POSES).map(([k, p]) => (
@@ -127,7 +152,7 @@ function CharacterInspector({ el, upd, checkpoint }: { el: CharacterEl; upd: (p:
           <button key={x} className={el.expression === x ? "on" : ""} onClick={() => upd({ expression: x } as Partial<El>)}>{x}</button>
         ))}
       </div>
-      {el.rig === "kid" && (
+      {el.rig === "kid" && !hero && (
         <>
           <h4>Hair</h4>
           <div className="chips">
@@ -146,8 +171,12 @@ function CharacterInspector({ el, upd, checkpoint }: { el: CharacterEl; upd: (p:
           <Swatches colors={["#A8754B", "#F4F1EC", "#F2A65A", "#7D7D7D", "#2B2B2B", "#B8C4CC", "#C9A0DC"]} value={el.colors.skin} onPick={(c) => { setColor("skin", c); }} />
         </>
       )}
-      <h4>Shirt</h4>
-      <Swatches colors={PALETTE} value={el.colors.shirt} onPick={(c) => setColor("shirt", c)} />
+      {!hero && (
+        <>
+          <h4>Shirt</h4>
+          <Swatches colors={PALETTE} value={el.colors.shirt} onPick={(c) => setColor("shirt", c)} />
+        </>
+      )}
       <h4>Pants</h4>
       <Swatches colors={PALETTE} value={el.colors.pants} onPick={(c) => setColor("pants", c)} />
       <h4>Shoes</h4>

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { consumeAiCredit } from "@/lib/plan-server";
+import { copyRemote } from "@/lib/storage";
 
 // Image generation behind a provider switch. Pick the cheapest that looks good to you:
 //   AI_IMAGE_PROVIDER=fal     -> FLUX schnell on fal.ai (fractions of a cent per image)
@@ -13,6 +15,10 @@ export async function POST(req: Request) {
   if (!prompt || prompt.length > 400) return NextResponse.json({ error: "Describe the picture in a sentence or two." }, { status: 400 });
   if (BLOCK.test(prompt)) return NextResponse.json({ error: "Let's keep it picture-book friendly — try another idea!" }, { status: 400 });
 
+  const provider = process.env.AI_IMAGE_PROVIDER ?? "fal";
+  if ((provider === "openai" && !process.env.OPENAI_API_KEY) || (provider !== "openai" && !process.env.FAL_KEY))
+    return NextResponse.json({ error: "AI painting isn't switched on yet. Add an image API key to turn it on." }, { status: 503 });
+
   const credit = await consumeAiCredit();
   if (!credit.ok) return NextResponse.json({ error: credit.reason }, { status: 402 });
 
@@ -21,7 +27,6 @@ export async function POST(req: Request) {
     (kind === "sticker" ? " Single isolated subject, centered, on a plain white background." : " Full scene, leave open space for text.");
 
   try {
-    const provider = process.env.AI_IMAGE_PROVIDER ?? "fal";
     if (provider === "openai") {
       const r = await fetch("https://api.openai.com/v1/images/generations", {
         method: "POST",
@@ -36,7 +41,8 @@ export async function POST(req: Request) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error?.message ?? "generation failed");
-      return NextResponse.json({ url: `data:image/png;base64,${j.data[0].b64_json}`, left: credit.left });
+      const saved = await copyRemote(`data:image/png;base64,${j.data[0].b64_json}`, "ai", (await auth()).userId!);
+      return NextResponse.json({ url: saved.url, left: credit.left });
     }
     const r = await fetch("https://fal.run/fal-ai/flux/schnell", {
       method: "POST",
@@ -45,7 +51,9 @@ export async function POST(req: Request) {
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail ?? "generation failed");
-    return NextResponse.json({ url: j.images[0].url, left: credit.left });
+    // fal.ai URLs expire, so keep our own copy.
+    const saved = await copyRemote(j.images[0].url, "ai", (await auth()).userId!);
+    return NextResponse.json({ url: saved.url, left: credit.left });
   } catch (e) {
     return NextResponse.json({ error: "The paintbrush slipped — " + (e as Error).message }, { status: 500 });
   }

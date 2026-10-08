@@ -1,10 +1,9 @@
 "use client";
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
-import { Book, El, Page, newBook, newId, newPage } from "./book";
+import { Book, El, Hero, Page, newBook, newId, newPage } from "./book";
 
-// v1 storage: the browser (localStorage), keyed per signed-in user.
-// Swap `storage` for a server adapter (Supabase/Postgres) when you add cloud sync.
+// In-memory editor state. Books are loaded from and saved to the server by lib/sync.ts;
+// the demo build creates books locally with createBook.
 
 interface History {
   past: Book[];
@@ -19,6 +18,8 @@ interface State {
   history: Record<string, History>;
 
   createBook: (title?: string, trim?: string, mode?: Book["mode"]) => string;
+  loadBook: (book: Book) => void;
+  setHero: (hero: Hero) => void;
   deleteBook: (id: string) => void;
   openBook: (id: string) => void;
   updateBookMeta: (patch: Partial<Pick<Book, "title" | "author" | "trim" | "mode">>) => void;
@@ -44,9 +45,7 @@ interface State {
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 
-export const useStore = create<State>()(
-  persist(
-    (set, get) => {
+export const useStore = create<State>()((set, get) => {
       // Record an undo snapshot, then apply a mutation to the current book.
       const mutate = (fn: (b: Book) => void, commit = true) => {
         const { currentBookId, books, history } = get();
@@ -72,6 +71,11 @@ export const useStore = create<State>()(
         selectedId: null,
         history: {},
 
+        loadBook: (book) => set((s) => ({ books: { ...s.books, [book.id]: book } })),
+        setHero: (hero) =>
+          mutate((b) => {
+            b.hero = hero;
+          }),
         createBook: (title, trim, mode) => {
           const b = newBook(title, trim, mode);
           set((s) => ({ books: { ...s.books, [b.id]: b } }));
@@ -202,21 +206,7 @@ export const useStore = create<State>()(
           if (!next.pages.some((p) => p.id === get().currentPageId)) set({ currentPageId: next.pages[0].id });
         },
       };
-    },
-    {
-      name: "bookling-books",
-      storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({ books: s.books }),
-      skipHydration: true,
-    },
-  ),
-);
-
-// Call once on the client with the signed-in user's id so each account gets its own shelf.
-export function hydrateForUser(userId: string) {
-  useStore.persist.setOptions({ name: `bookling-books-${userId}` });
-  return useStore.persist.rehydrate();
-}
+    });
 
 export function useCurrent() {
   const book = useStore((s) => (s.currentBookId ? s.books[s.currentBookId] : undefined));

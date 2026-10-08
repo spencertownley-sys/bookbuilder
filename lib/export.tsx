@@ -4,7 +4,7 @@ import { createRef } from "react";
 import type Konva from "konva";
 import { jsPDF } from "jspdf";
 import PageStage from "@/components/editor/PageStage";
-import { Book, Page, pageDims } from "./book";
+import { BLEED_IN, Book, Page, fillTokens, pageDims } from "./book";
 import { loadImage } from "./images";
 
 const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -18,38 +18,52 @@ export async function renderPage(book: Book, page: Page, dpi: number, watermark:
   const ref = createRef<Konva.Stage>();
   const root = createRoot(host);
   try {
-    const srcs = [page.background, ...page.elements.map((e) => (e.type === "image" ? e.src : undefined))].filter(Boolean) as string[];
+    const srcs = [
+      page.background,
+      ...page.elements.map((e) => (e.type === "image" ? (e.slot === "heroPhoto" && book.hero?.photo ? book.hero.photo : e.src) : undefined)),
+    ].filter(Boolean) as string[];
     await Promise.allSettled(srcs.map(loadImage));
     await document.fonts?.ready;
     root.render(<PageStage ref={ref} book={book} page={page} scale={1} watermark={watermark} />);
     for (let i = 0; i < 4; i++) await frame();
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 80));
     const pixelRatio = (d.fullW * dpi) / d.width;
-    return ref.current!.toDataURL({ mimeType: "image/jpeg", quality: 0.92, pixelRatio });
+    return ref.current!.toDataURL({ mimeType: "image/jpeg", quality: 0.86, pixelRatio });
   } finally {
     root.unmount();
     host.remove();
   }
 }
 
-export interface ExportOptions {
+export interface InteriorOptions {
   dpi: number; // 300 for print, 150 for screen
   watermark: boolean;
+  padTo?: number; // add blank pages at the end to reach this count (binding rules)
   onProgress?: (done: number, total: number) => void;
 }
 
-/** Interior PDF: every page at full-bleed size (trim + 0.125" each side) — the format KDP, IngramSpark and Lulu ask for. */
-export async function exportInteriorPdf(book: Book, opts: ExportOptions) {
+/** Interior PDF: every page at full-bleed size (trim + 0.125" each side), the format KDP, IngramSpark and Lulu ask for. */
+export async function buildInteriorPdf(book: Book, opts: InteriorOptions): Promise<Blob> {
   const d = pageDims(book.trim);
-  const pdf = new jsPDF({ unit: "in", format: [d.fullW, d.fullH], orientation: d.fullW > d.fullH ? "landscape" : "portrait" });
-  for (let i = 0; i < book.pages.length; i++) {
-    if (i > 0) pdf.addPage([d.fullW, d.fullH], d.fullW > d.fullH ? "landscape" : "portrait");
-    const url = await renderPage(book, book.pages[i], opts.dpi, opts.watermark);
-    pdf.addImage(url, "JPEG", 0, 0, d.fullW, d.fullH);
-    opts.onProgress?.(i + 1, book.pages.length);
+  const orient = d.fullW > d.fullH ? "landscape" : "portrait";
+  const total = Math.max(book.pages.length, opts.padTo ?? 0);
+  const pdf = new jsPDF({ unit: "in", format: [d.fullW, d.fullH], orientation: orient, compress: true });
+  for (let i = 0; i < total; i++) {
+    if (i > 0) pdf.addPage([d.fullW, d.fullH], orient);
+    const page = book.pages[i];
+    if (page) pdf.addImage(await renderPage(book, page, opts.dpi, opts.watermark), "JPEG", 0, 0, d.fullW, d.fullH, undefined, "FAST");
+    else {
+      pdf.setFillColor("#FFFFFF");
+      pdf.rect(0, 0, d.fullW, d.fullH, "F");
+    }
+    opts.onProgress?.(i + 1, total);
   }
-  pdf.setProperties({ title: book.title, author: book.author, creator: "Bookling" });
-  pdf.save(`${slug(book.title)}-interior.pdf`);
+  pdf.setProperties({ title: book.title, author: book.author, creator: "Book Builder" });
+  return pdf.output("blob");
+}
+
+export async function exportInteriorPdf(book: Book, opts: InteriorOptions) {
+  download(await buildInteriorPdf(book, opts), `${slug(book.title)}-interior.pdf`);
 }
 
 // KDP premium-color spine: page count × 0.002347 in (check KDP's calculator before upload).
@@ -57,52 +71,82 @@ export function spineWidthIn(pageCount: number) {
   return Math.max(0.06, pageCount * 0.002347);
 }
 
-/** Paperback cover wrap: back | spine | front, with bleed — built from the first page. */
-export async function exportCoverPdf(book: Book, blurb: string) {
+export interface CoverSpec {
+  widthIn: number; // whole spread incl. bleed/wrap
+  heightIn: number;
+  spineIn: number;
+  blurb?: string;
+}
+
+/** Cover spread: back | spine | front, built from the book's cover page. Works for KDP and Lulu sizes. */
+export async function buildCoverPdf(book: Book, spec: CoverSpec): Promise<Blob> {
   const d = pageDims(book.trim);
   const dpi = 300;
   const front = await loadImage(await renderPage(book, book.pages[0], dpi, false));
-  const spine = spineWidthIn(Math.max(24, book.pages.length));
-  const W = d.trim.w * 2 + spine + 0.25;
-  const H = d.trim.h + 0.25;
+  const W = spec.widthIn, H = spec.heightIn, spine = spec.spineIn;
+  const panel = (W - spine) / 2; // each of back and front, including bleed/wrap
   const c = document.createElement("canvas");
   c.width = Math.round(W * dpi);
   c.height = Math.round(H * dpi);
   const g = c.getContext("2d")!;
-  const bg = book.pages[0].bgColor || "#FFFDF7";
-  g.fillStyle = bg;
+  g.fillStyle = book.pages[0].bgColor || "#FFFDF7";
   g.fillRect(0, 0, c.width, c.height);
-  // back cover: soft wash + blurb
-  g.fillStyle = "#F9D56E";
-  g.globalAlpha = 0.35;
-  g.fillRect(0, 0, (d.trim.w + 0.125) * dpi, c.height);
-  g.globalAlpha = 1;
+
+  // Front: the cover page, scaled to fill the front panel (extra wrap shows more of the art).
+  const fx = (panel + spine) * dpi, fw = panel * dpi, fh = H * dpi;
+  const s = Math.max(fw / front.width, fh / front.height);
+  const dw = front.width * s, dh = front.height * s;
+  g.save();
+  g.beginPath();
+  g.rect(fx, 0, fw, fh);
+  g.clip();
+  g.drawImage(front, fx + (fw - dw) / 2, (fh - dh) / 2, dw, dh);
+  g.restore();
+
+  // Back: a soft wash of the front art + blurb.
+  g.save();
+  g.beginPath();
+  g.rect(0, 0, panel * dpi, fh);
+  g.clip();
+  g.globalAlpha = 0.25;
+  g.drawImage(front, (panel * dpi - dw) / 2, (fh - dh) / 2, dw, dh);
+  g.globalAlpha = 0.82;
+  g.fillStyle = "#FFFDF7";
+  g.fillRect(0, 0, panel * dpi, fh);
+  g.restore();
+  const margin = (H - d.trim.h) / 2 + 0.5; // stay inside wrap + safe area
   g.fillStyle = "#2A363B";
-  g.font = `${0.22 * dpi}px Fredoka, sans-serif`;
-  wrapText(g, blurb || `${book.title}${book.author ? " by " + book.author : ""}`, 0.75 * dpi, 1.2 * dpi, (d.trim.w - 1.25) * dpi, 0.32 * dpi);
-  // barcode-safe area (KDP places it bottom right of back cover)
-  g.fillStyle = "#ffffff";
-  g.fillRect((d.trim.w + 0.125 - 0.25 - 2) * dpi, (H - 0.25 - 0.125 - 1.2) * dpi, 2 * dpi, 1.2 * dpi);
-  // spine
-  const spineX = (d.trim.w + 0.125) * dpi;
-  g.fillStyle = "#E84A5F";
-  g.fillRect(spineX, 0, spine * dpi, c.height);
-  if (book.pages.length >= 79) {
-    g.save();
-    g.translate(spineX + (spine * dpi) / 2, c.height / 2);
-    g.rotate(Math.PI / 2);
-    g.fillStyle = "#fff";
-    g.font = `${Math.min(spine * 0.6, 0.3) * dpi}px Fredoka, sans-serif`;
-    g.textAlign = "center";
-    g.textBaseline = "middle";
-    g.fillText(book.title, 0, 0);
-    g.restore();
+  g.font = `${0.24 * dpi}px Fredoka, sans-serif`;
+  const blurb = fillTokens(spec.blurb || `${book.title}${book.author ? " by " + book.author : ""}`, book.hero);
+  wrapText(g, blurb, margin * dpi, (margin + 0.6) * dpi, (panel - margin * 2) * dpi, 0.36 * dpi);
+
+  // Spine
+  if (spine > 0) {
+    g.fillStyle = book.hero?.favoriteColor ?? "#E84A5F";
+    g.fillRect(panel * dpi, 0, spine * dpi, fh);
+    if (spine >= 0.25) {
+      g.save();
+      g.translate((panel + spine / 2) * dpi, fh / 2);
+      g.rotate(Math.PI / 2);
+      g.fillStyle = "#fff";
+      g.font = `${Math.min(spine * 0.55, 0.3) * dpi}px Fredoka, sans-serif`;
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText(book.title, 0, 0);
+      g.restore();
+    }
   }
-  // front cover (page 1 already includes bleed)
-  g.drawImage(front, spineX + spine * dpi - 0.125 * dpi, 0, d.fullW * dpi, d.fullH * dpi);
-  const pdf = new jsPDF({ unit: "in", format: [W, H], orientation: "landscape" });
-  pdf.addImage(c.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, W, H);
-  pdf.save(`${slug(book.title)}-cover.pdf`);
+  const pdf = new jsPDF({ unit: "in", format: [W, H], orientation: W > H ? "landscape" : "portrait", compress: true });
+  pdf.addImage(c.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, W, H, undefined, "FAST");
+  return pdf.output("blob");
+}
+
+/** KDP-style paperback cover (bleed only, KDP spine formula). */
+export async function exportCoverPdf(book: Book, blurb: string) {
+  const d = pageDims(book.trim);
+  const spine = spineWidthIn(Math.max(24, book.pages.length));
+  const blob = await buildCoverPdf(book, { widthIn: d.trim.w * 2 + spine + BLEED_IN * 2, heightIn: d.trim.h + BLEED_IN * 2, spineIn: spine, blurb });
+  download(blob, `${slug(book.title)}-cover.pdf`);
 }
 
 export async function exportPagePng(book: Book, page: Page, watermark: boolean) {
@@ -111,6 +155,15 @@ export async function exportPagePng(book: Book, page: Page, watermark: boolean) 
   a.href = url;
   a.download = `${slug(book.title)}-page.jpg`;
   a.click();
+}
+
+function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 function wrapText(g: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, lh: number) {

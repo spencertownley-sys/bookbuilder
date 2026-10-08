@@ -20,7 +20,7 @@ export default function Home() {
             Make a <span className="hl">real picture book</span> in an afternoon.
           </h1>
           <p className="lead">
-            Bookling is as easy as Canva and as fun as a sticker book. Drag in scenes, pose characters, write your story — then
+            Book Builder is as easy as Canva and as fun as a sticker book. Drag in scenes, pose characters, write your story — then
             print one copy for bedtime or publish it on Amazon.
           </p>
           <div className="ctas">
@@ -48,7 +48,7 @@ export default function Home() {
           ))}
         </div>
       </section>
-      <footer className="footer">© {new Date().getFullYear()} Bookling · Made for storytellers of every size</footer>
+      <footer className="footer">© {new Date().getFullYear()} Book Builder · Made for storytellers of every size</footer>
     </>
   );
 }

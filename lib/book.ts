@@ -54,6 +54,7 @@ export interface ImageEl extends Base {
   height: number;
   flipX?: boolean;
   aiGenerated?: boolean;
+  slot?: "heroPhoto"; // filled by the hero's photo when one is set
 }
 
 export interface TextEl extends Base {
@@ -69,6 +70,7 @@ export interface TextEl extends Base {
   outline?: string; // stroke color for readability on busy art
   lineHeight: number;
   bubble?: boolean; // speech-bubble backdrop
+  backdrop?: boolean; // soft white panel behind story text
 }
 
 export type Rig = "kid" | "bear" | "bunny" | "cat" | "robot";
@@ -97,6 +99,7 @@ export interface CharacterEl extends Base {
   scale: number;
   flipX: boolean;
   colors: { skin: string; hair: string; shirt: string; pants: string; shoes: string };
+  isHero?: boolean; // takes the look from Book.hero
 }
 
 export type El = ImageEl | TextEl | CharacterEl;
@@ -117,6 +120,67 @@ export interface Book {
   pages: Page[];
   updatedAt: number;
   usesAI: boolean; // drives the KDP/Apple disclosure reminder
+  hero?: Hero;
+  starter?: string; // id of the story starter it began from
+}
+
+// ---------- Hero ("Star your child") ----------
+export type Pronoun = "she" | "he" | "they";
+
+export interface Hero {
+  name: string;
+  pronoun: Pronoun;
+  skin: string;
+  hair: HairStyle;
+  hairColor: string;
+  favoriteColor: string;
+  photo?: string; // media URL, used on the dedication page
+}
+
+export const DEFAULT_HERO: Hero = {
+  name: "",
+  pronoun: "they",
+  skin: "#F0C8A0",
+  hair: "short",
+  hairColor: "#5B3A1E",
+  favoriteColor: "#E84A5F",
+};
+
+const PRONOUNS: Record<Pronoun, Record<string, string>> = {
+  she: { they: "she", them: "her", their: "her", theirs: "hers", themself: "herself", "they're": "she's", "they've": "she's", are: "is", were: "was", have: "has" },
+  he: { they: "he", them: "him", their: "his", theirs: "his", themself: "himself", "they're": "he's", "they've": "he's", are: "is", were: "was", have: "has" },
+  they: { they: "they", them: "them", their: "their", theirs: "theirs", themself: "themself", "they're": "they're", "they've": "they've", are: "are", were: "were", have: "have" },
+};
+
+export const TOKEN_HELP = "{name}, {they}, {them}, {their}, {theirs}, {themself}, {they're}, {are}, {were}, {have} — capitalize the first letter for the start of a sentence, e.g. {They}";
+
+/** Replace {name}, {they}, {Their}… with the hero's details. Unknown tokens are left as typed. */
+export function fillTokens(text: string, hero?: Hero): string {
+  if (!hero || !text.includes("{")) return text;
+  return text.replace(/\{([A-Za-z']+)\}/g, (m, raw: string) => {
+    const lower = raw.toLowerCase();
+    const cap = raw[0] === raw[0].toUpperCase();
+    let v: string | undefined;
+    if (lower === "name") v = hero.name || "{name}";
+    else v = PRONOUNS[hero.pronoun][lower];
+    if (v === undefined) return m;
+    return cap && v[0] !== "{" ? v[0].toUpperCase() + v.slice(1) : v;
+  });
+}
+
+export function hasUnfilledTokens(text: string, hero?: Hero) {
+  return /\{name\}/i.test(fillTokens(text, hero));
+}
+
+/** The look a hero character should render with. */
+export function applyHero(el: CharacterEl, hero?: Hero): CharacterEl {
+  if (!el.isHero || !hero) return el;
+  return {
+    ...el,
+    name: hero.name || el.name,
+    hair: el.rig === "kid" ? hero.hair : el.hair,
+    colors: { ...el.colors, skin: el.rig === "kid" ? hero.skin : el.colors.skin, hair: hero.hairColor, shirt: hero.favoriteColor },
+  };
 }
 
 // ---------- Poses ----------

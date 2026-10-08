@@ -7,7 +7,7 @@ import { useCurrent, useStore } from "@/lib/store";
 import type { Plan } from "@/lib/plans";
 import { loadImage } from "@/lib/images";
 
-export type PanelId = "backgrounds" | "characters" | "stickers" | "text" | "ai" | "uploads";
+export type PanelId = "backgrounds" | "characters" | "stickers" | "text" | "ai" | "uploads" | "family";
 
 export const PANEL_TABS: { id: PanelId; label: string; icon: string }[] = [
   { id: "backgrounds", label: "Scenes", icon: "🏞️" },
@@ -16,10 +16,12 @@ export const PANEL_TABS: { id: PanelId; label: string; icon: string }[] = [
   { id: "text", label: "Text", icon: "🔤" },
   { id: "ai", label: "AI Art", icon: "✨" },
   { id: "uploads", label: "Uploads", icon: "📷" },
+  { id: "family", label: "Family", icon: "💌" },
 ];
 
 export interface Services {
   generateImage: (prompt: string, kind: "scene" | "sticker") => Promise<{ url: string } | { error: string }>;
+  uploadImage?: (file: File) => Promise<string>; // stores the file and returns its URL (real app)
 }
 
 const RIG_INFO: Record<Rig, { label: string; emoji: string }> = {
@@ -156,7 +158,7 @@ export function PanelBody({ id, plan, services, onUpsell }: { id: PanelId; plan:
 
   if (id === "ai") return <AiPanel plan={plan} services={services} onUpsell={onUpsell} />;
 
-  return <UploadPanel />;
+  return <UploadPanel services={services} />;
 }
 
 function AiPanel({ plan, services, onUpsell }: { plan: Plan; services: Services; onUpsell: (why: string) => void }) {
@@ -210,20 +212,34 @@ function AiPanel({ plan, services, onUpsell }: { plan: Plan; services: Services;
   );
 }
 
-function UploadPanel() {
+function UploadPanel({ services }: { services: Services }) {
   const { book } = useCurrent();
   const s = useStore();
   const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
   if (!book) return null;
   const d = pageDims(book.trim);
-  const onFile = (f?: File) => {
+  const place = async (src: string) => {
+    const img = await loadImage(src);
+    s.addElement(newImage(src, d.width, d.height, { w: img.width, h: img.height }));
+  };
+  const onFile = async (f?: File) => {
     if (!f) return;
-    const r = new FileReader();
-    r.onload = async () => {
-      const src = r.result as string;
-      const img = await loadImage(src);
-      s.addElement(newImage(src, d.width, d.height, { w: img.width, h: img.height }));
-    };
+    setErr("");
+    if (services.uploadImage) {
+      setBusy(true);
+      try {
+        await place(await services.uploadImage(f));
+      } catch (e) {
+        setErr((e as Error).message);
+      }
+      setBusy(false);
+      if (input.current) input.current.value = "";
+      return;
+    }
+    const r = new FileReader(); // demo: keep the image inside the page
+    r.onload = () => place(r.result as string);
     r.readAsDataURL(f);
   };
   return (
@@ -231,7 +247,8 @@ function UploadPanel() {
       <h3>Uploads</h3>
       <p className="hint">Add a child&apos;s drawing, a family photo, or your own art.</p>
       <input ref={input} type="file" accept="image/*" hidden onChange={(e) => onFile(e.target.files?.[0])} />
-      <button className="btn primary wide" onClick={() => input.current?.click()}>Upload an image</button>
+      <button className="btn primary wide" disabled={busy} onClick={() => input.current?.click()}>{busy ? "Uploading…" : "Upload an image"}</button>
+      {err && <p className="err" role="alert">{err}</p>}
       <h4>Page color</h4>
       <div className="swatches">
         {PALETTE.map((c) => (
