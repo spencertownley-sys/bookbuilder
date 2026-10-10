@@ -56,11 +56,12 @@ create table if not exists files (
   created_at  timestamptz not null default now()
 );
 
--- Printed-copy orders.
+-- Printed-copy orders. They outlive the book (book_id becomes null) so order history and
+-- accounting records survive when a book or account is deleted.
 create table if not exists orders (
   id                 text primary key,
   owner_id           text not null,
-  book_id            text not null references books(id) on delete cascade,
+  book_id            text references books(id) on delete set null,
   book_title         text not null,
   format             text not null check (format in ('hardcover', 'paperback')),
   pod_package_id     text not null,
@@ -85,6 +86,48 @@ create table if not exists orders (
 );
 create index if not exists orders_owner_idx on orders (owner_id, created_at desc);
 
+-- Upgrades for databases created by the first launch build.
+alter table orders alter column book_id drop not null;
+alter table orders drop constraint if exists orders_book_id_fkey;
+alter table orders add constraint orders_book_id_fkey foreign key (book_id) references books(id) on delete set null;
+alter table orders add column if not exists print_cost_cents integer; -- Lulu's charge incl. shipping, when known
+
+-- Stripe Checkout sessions already fulfilled. The webhook and the buyer's return to the site can both
+-- deliver the same session; this makes fulfillment run exactly once.
+create table if not exists checkout_sessions (
+  id            text primary key,
+  kind          text,
+  processed_at  timestamptz not null default now(),
+  status        text not null default 'done' -- 'pending' while being fulfilled; reclaimable if it stalls
+);
+alter table checkout_sessions add column if not exists status text not null default 'done';
+
+-- Reports from authors (about a note) and from share-link viewers (about a book).
+create table if not exists reports (
+  id          bigserial primary key,
+  book_id     text,
+  note_id     bigint,
+  reporter    text not null check (reporter in ('author', 'viewer')),
+  reason      text not null,
+  details     text check (char_length(details) <= 1000),
+  status      text not null default 'open',
+  created_at  timestamptz not null default now()
+);
+create index if not exists reports_status_idx on reports (status, created_at desc);
+
+-- Product events behind the launch success metrics (see /admin).
+create table if not exists events (
+  id          bigserial primary key,
+  name        text not null,
+  user_id     text,
+  book_id     text,
+  props       jsonb,
+  created_at  timestamptz not null default now()
+);
+create index if not exists events_name_idx on events (name, created_at desc);
+create index if not exists events_book_idx on events (book_id, name);
+create index if not exists events_user_idx on events (user_id);
+
 -- All access goes through the app's server with its own auth checks, so row-level
 -- security stays on with no public policies (Supabase's anon key can read nothing).
 alter table books        enable row level security;
@@ -93,3 +136,6 @@ alter table page_notes   enable row level security;
 alter table recordings   enable row level security;
 alter table files        enable row level security;
 alter table orders       enable row level security;
+alter table reports      enable row level security;
+alter table checkout_sessions enable row level security;
+alter table events       enable row level security;

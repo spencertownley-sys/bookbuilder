@@ -8,7 +8,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ key: st
   return new Response(new Uint8Array(file.data), {
     headers: {
       "Content-Type": file.mimeType,
-      "Cache-Control": "public, max-age=31536000, immutable",
+      // private: browsers may cache, shared CDNs may not, so a deleted photo really disappears.
+      "Cache-Control": "private, max-age=31536000, immutable",
       "X-Robots-Tag": "noindex",
     },
   });

@@ -7,6 +7,7 @@ import { PLANS } from "@/lib/plans";
 export default function PricingClient() {
   const [yearly, setYearly] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState("");
   const { isSignedIn } = useAuth();
   const router = useRouter();
 
@@ -14,11 +15,13 @@ export default function PricingClient() {
     if (!isSignedIn) return router.push("/sign-up?redirect_url=/pricing");
     if (planId === "free") return router.push("/dashboard");
     setBusy(planId);
-    const r = await fetch("/api/checkout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ planId, interval: yearly ? "year" : "month" }) });
-    const j = await r.json();
+    setErr("");
+    const r = await fetch("/api/checkout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ planId, interval: yearly ? "year" : "month" }) }).catch(() => null);
+    const j = await r?.json().catch(() => ({}));
     setBusy(null);
-    if (j.url) window.location.href = j.url;
-    else alert(j.error ?? "Checkout isn't set up yet.");
+    if (j?.url) window.location.href = j.url;
+    else if (r?.status === 403) router.push("/welcome?next=/pricing");
+    else setErr(j?.error ?? "Checkout isn't available right now. Please try again.");
   };
 
   return (
@@ -29,6 +32,7 @@ export default function PricingClient() {
           <button className={yearly ? "on" : ""} onClick={() => setYearly(true)}>Yearly · save ~35%</button>
         </div>
       </div>
+      {err && <p className="err" role="alert" style={{ textAlign: "center", marginBottom: 12 }}>{err}</p>}
       <div className="plans">
         {PLANS.map((p) => (
           <div key={p.id} className={"plan" + (p.highlight ? " hl" : "")}>

@@ -18,27 +18,40 @@ function LinkCard({ bookId, kind, title, help }: { bookId: string; kind: Kind; t
   const [copied, setCopied] = useState(false);
   const [confirmOff, setConfirmOff] = useState(false);
 
+  const [err, setErr] = useState("");
+
   useEffect(() => {
-    fetch(`/api/books/${bookId}/share`).then(async (r) => {
-      const j = await r.json();
-      setToken(j.links?.find((l: { kind: Kind; token: string }) => l.kind === kind)?.token ?? null);
-    });
+    fetch(`/api/books/${bookId}/share`)
+      .then(async (r) => {
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error);
+        setToken(j.links?.find((l: { kind: Kind; token: string }) => l.kind === kind)?.token ?? null);
+      })
+      .catch(() => (setErr("Couldn't check this link. Reload to try again."), setToken(null)));
   }, [bookId, kind]);
 
   const url = token ? `${location.origin}/${kind === "read" ? "read" : "record"}/${token}` : "";
-  const create = async () => {
+  const guarded = async (fn: () => Promise<void>) => {
     setBusy(true);
-    const j = await postJson<{ link: { token: string } }>(`/api/books/${bookId}/share`, { kind });
-    setToken(j.link.token);
+    setErr("");
+    try {
+      await fn();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
     setBusy(false);
   };
-  const off = async () => {
-    setBusy(true);
-    await postJson(`/api/books/${bookId}/share`, { kind }, "DELETE");
-    setToken(null);
-    setConfirmOff(false);
-    setBusy(false);
-  };
+  const create = () =>
+    guarded(async () => {
+      const j = await postJson<{ link: { token: string } }>(`/api/books/${bookId}/share`, { kind });
+      setToken(j.link.token);
+    });
+  const off = () =>
+    guarded(async () => {
+      await postJson(`/api/books/${bookId}/share`, { kind }, "DELETE");
+      setToken(null);
+      setConfirmOff(false);
+    });
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
@@ -70,6 +83,7 @@ function LinkCard({ bookId, kind, title, help }: { bookId: string; kind: Kind; t
           {confirmOff && <p className="fineprint">Anyone with this link will lose access right away.</p>}
         </>
       )}
+      {err && <p className="err" role="alert">{err}</p>}
     </div>
   );
 }
@@ -112,14 +126,47 @@ export default function FamilyPanel({ bookId, family, onChanged, onGoToPage }: {
       {family.notes.length === 0 && <p className="hint">Hearts and notes from your share link will show up here.</p>}
       <ul className="notes">
         {family.notes.slice(0, 50).map((n) => (
-          <li key={n.id}>
-            <button className="link-btn" onClick={() => onGoToPage(n.page_id)}>
-              {n.kind === "heart" ? "❤️" : "💬"} <b>{n.author_name || "Someone"}</b> on {pageLabel(n.page_id)}
-            </button>
-            {n.body && <p>{n.body}</p>}
-          </li>
+          <NoteItem key={n.id} bookId={bookId} note={n} where={pageLabel(n.page_id)} onGo={() => onGoToPage(n.page_id)} onChanged={onChanged} />
         ))}
       </ul>
     </div>
+  );
+}
+
+function NoteItem({ bookId, note: n, where, onGo, onChanged }: { bookId: string; note: FamilyData["notes"][number]; where: string; onGo: () => void; onChanged: () => void }) {
+  const [confirm, setConfirm] = useState<null | "remove" | "report">(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const act = async (report: boolean) => {
+    setBusy(true);
+    setErr("");
+    try {
+      await postJson(`/api/books/${bookId}/notes/${n.id}`, { report }, "DELETE");
+      onChanged();
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <li>
+      <button className="link-btn" onClick={onGo}>
+        {n.kind === "heart" ? "❤️" : "💬"} <b>{n.author_name || "Someone"}</b> on {where}
+      </button>
+      {n.body && <p>{n.body}</p>}
+      {confirm ? (
+        <div className="note-actions">
+          <span className="fineprint">{confirm === "report" ? "Report this note to us and remove it?" : "Remove this note?"}</span>
+          <button className="btn ghost small" disabled={busy} onClick={() => setConfirm(null)}>Keep</button>
+          <button className="btn danger small" disabled={busy} onClick={() => act(confirm === "report")}>{confirm === "report" ? "Report" : "Remove"}</button>
+        </div>
+      ) : (
+        <div className="note-actions">
+          <button className="link-btn small" onClick={() => setConfirm("remove")}>Remove</button>
+          {n.kind === "note" && <button className="link-btn small" onClick={() => setConfirm("report")}>Report</button>}
+        </div>
+      )}
+      {err && <p className="err" role="alert">{err}</p>}
+    </li>
   );
 }

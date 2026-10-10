@@ -6,6 +6,7 @@ import type { Plan } from "@/lib/plans";
 import type { Book, Hero, Page } from "@/lib/book";
 import { pageDims } from "@/lib/book";
 import { importLocalBooks } from "@/lib/sync";
+import { postJson } from "@/lib/api";
 
 const PageStage = dynamic(() => import("@/components/editor/PageStage"), { ssr: false });
 
@@ -27,9 +28,9 @@ export default function ShelfClient({ userId, plan }: { userId: string; plan: Pl
   const router = useRouter();
 
   const load = async () => {
-    const r = await fetch("/api/books");
-    const j = await r.json();
-    if (!r.ok) return setErr(j.error ?? "Couldn't load your books.");
+    const r = await fetch("/api/books").catch(() => null);
+    const j = await r?.json().catch(() => ({}));
+    if (!r?.ok) return setErr(j?.error ?? "Couldn't load your books. Check your connection and reload the page.");
     setBooks(j.books);
   };
 
@@ -38,21 +39,33 @@ export default function ShelfClient({ userId, plan }: { userId: string; plan: Pl
       if (n) setNotice(`Moved ${n} book${n > 1 ? "s" : ""} from this browser into your account.`);
       load();
     });
-    if (new URLSearchParams(location.search).get("upgraded")) setNotice("Thanks! Your plan is upgraded.");
+    const q = new URLSearchParams(location.search);
+    if (q.get("upgraded")) {
+      const sid = q.get("session_id");
+      history.replaceState(null, "", "/dashboard");
+      if (sid)
+        postJson("/api/checkout/confirm", { sessionId: sid })
+          .then(() => (setNotice("Thanks! Your plan is upgraded."), router.refresh()))
+          .catch(() => setNotice("Thanks! Your upgrade is being applied; it can take a minute to show."));
+      else setNotice("Thanks! Your plan is upgraded.");
+    }
   }, [userId]);
 
   const atLimit = (books?.length ?? 0) >= plan.limits.books;
 
   const manageBilling = async () => {
-    const r = await fetch("/api/billing-portal", { method: "POST" });
-    const j = await r.json();
-    if (j.url) window.location.href = j.url;
+    const r = await fetch("/api/billing-portal", { method: "POST" }).catch(() => null);
+    const j = await r?.json().catch(() => ({}));
+    if (j?.url) window.location.href = j.url;
+    else setErr(j?.error ?? "Couldn't open billing. Please try again.");
   };
 
   const remove = async (id: string) => {
     setConfirmId(null);
-    const r = await fetch(`/api/books/${id}`, { method: "DELETE" });
-    if (r.ok) setBooks((b) => b?.filter((x) => x.id !== id) ?? null);
+    setErr("");
+    const r = await fetch(`/api/books/${id}`, { method: "DELETE" }).catch(() => null);
+    if (r?.ok) setBooks((b) => b?.filter((x) => x.id !== id) ?? null);
+    else setErr((await r?.json().catch(() => null))?.error ?? "Couldn't delete that book. Check your connection and try again.");
   };
 
   return (
@@ -62,6 +75,7 @@ export default function ShelfClient({ userId, plan }: { userId: string; plan: Pl
         <span className="badge soft">{plan.name} plan · {books?.length ?? "–"}/{plan.limits.books} books</span>
         <span style={{ flex: 1 }} />
         <a className="btn ghost" href="/orders">Orders</a>
+        <a className="btn ghost" href="/account">Account</a>
         {plan.id === "free" ? <a className="btn ghost" href="/pricing">Upgrade</a> : <button className="btn ghost" onClick={manageBilling}>Manage billing</button>}
       </div>
       {notice && <p className="notice">{notice}</p>}

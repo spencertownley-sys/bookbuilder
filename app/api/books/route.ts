@@ -2,6 +2,7 @@ import { sql } from "@/lib/db";
 import { assertBook, HttpError, json, requireUser, route } from "@/lib/server";
 import { buildFromStarter } from "@/lib/starters";
 import { Book, DEFAULT_HERO, Hero, newBook } from "@/lib/book";
+import { track } from "@/lib/events";
 
 // GET: the signed-in user's shelf (with each cover page so the shelf can draw thumbnails).
 export const GET = route(async () => {
@@ -32,5 +33,6 @@ export const POST = route(async (req: Request) => {
   }
   assertBook(book);
   await sql()`insert into books (id, owner_id, title, data) values (${book.id}, ${userId}, ${book.title}, ${sql().json(book as never)})`;
+  await track("book_created", { userId, bookId: book.id, props: { starter: body.starterId ?? null } });
   return json({ id: book.id, version: 1 }, 201);
 });
