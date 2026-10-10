@@ -11,6 +11,10 @@ export default function Page() {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
           <Link href="/" className="brand">📖 Book<b>Builder</b></Link>
           <SignUp />
+          <p className="fineprint" style={{ maxWidth: 380, textAlign: "center" }}>
+            Accounts are for adults 18 and over. By signing up you agree to our <Link href="/terms">Terms</Link> and{" "}
+            <Link href="/privacy">Privacy Policy</Link>.
+          </p>
         </div>
       </div>
     </div>

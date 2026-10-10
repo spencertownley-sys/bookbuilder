@@ -12,7 +12,7 @@ export interface Issue {
   page?: number; // index into book.pages
 }
 
-const PRINT_DPI_MIN = 150;
+export const PRINT_DPI_MIN = 200; // PRD: warn when art is below 200 dpi at print size
 const pageName = (i: number) => (i === 0 ? "Cover" : `Page ${i}`);
 
 function textBox(t: TextEl, hero: Book["hero"]) {
@@ -79,4 +79,13 @@ export async function checkBook(book: Book, opts: { minPages?: number } = {}): P
   if (book.usesAI || book.pages.some((p) => p.elements.some((e) => e.type === "image" && e.aiGenerated)))
     issues.push({ id: "ai", level: "info", message: "This book contains AI-generated art. Amazon KDP and Apple Books require you to tick their AI-content disclosure box when you upload." });
   return issues;
+}
+
+/** Counts for the editor's live print-check chip ("info" items are reminders, not problems). */
+export function summarize(issues: Issue[] | null) {
+  if (!issues) return null;
+  const block = issues.filter((i) => i.level === "block").length;
+  const warn = issues.filter((i) => i.level === "warn").length;
+  const pages = new Set(issues.filter((i) => i.level !== "info" && i.page !== undefined).map((i) => i.page!));
+  return { block, warn, pages };
 }

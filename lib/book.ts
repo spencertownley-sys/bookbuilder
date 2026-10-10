@@ -168,6 +168,11 @@ export function fillTokens(text: string, hero?: Hero): string {
   });
 }
 
+/** PRD "finished book": 12 or more pages, each with some text on it. */
+export function isFinished(book: Pick<Book, "pages">) {
+  return book.pages.length >= 12 && book.pages.every((p) => p.elements.some((e) => e.type === "text" && e.text.trim().length > 0));
+}
+
 export function hasUnfilledTokens(text: string, hero?: Hero) {
   return /\{name\}/i.test(fillTokens(text, hero));
 }

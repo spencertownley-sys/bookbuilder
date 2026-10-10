@@ -1,6 +1,6 @@
 import "server-only";
 import { sql } from "./db";
-import { putFile, mediaUrl } from "./storage";
+import { deleteFiles, putFile, mediaUrl } from "./storage";
 import { HttpError } from "./server";
 import type { Book } from "./book";
 
@@ -19,11 +19,13 @@ export async function saveRecording(req: Request, bookId: string, pageId: string
   if (duration > 62_000) throw new HttpError(413, "Recordings can be up to 60 seconds.");
   const saved = await putFile({ folder: "voice", data: await file.arrayBuffer(), mimeType: file.type, ownerId });
   const name = (recordedBy ?? "").slice(0, 40) || null;
+  const [old] = await sql()<{ file_key: string }[]>`select file_key from recordings where book_id = ${bookId} and page_id = ${pageId}`;
   await sql()`
     insert into recordings (book_id, page_id, file_key, mime_type, duration_ms, recorded_by)
     values (${bookId}, ${pageId}, ${saved.key}, ${saved.mimeType}, ${duration || null}, ${name})
     on conflict (book_id, page_id) do update
       set file_key = excluded.file_key, mime_type = excluded.mime_type, duration_ms = excluded.duration_ms,
           recorded_by = excluded.recorded_by, created_at = now()`;
+  if (old) await deleteFiles([old.file_key]); // re-recording replaces the old take
   return { url: mediaUrl(saved.key), by: name, durationMs: duration || null };
 }
