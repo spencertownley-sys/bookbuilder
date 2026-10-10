@@ -5,6 +5,7 @@ import { sql } from "./db";
 import { createPrintJob, luluConfigured, LuluJob, orderStatusFromLulu } from "./lulu";
 import { deleteFiles, publicMediaUrl } from "./storage";
 import { setUserPlan } from "./plan-server";
+import { stripe } from "./stripe";
 import { track, trackOncePerBook } from "./events";
 import type { PlanId } from "./plans";
 import type { ShipTo, ShippingLevel } from "./printing";
@@ -13,28 +14,37 @@ import type { ShipTo, ShippingLevel } from "./printing";
 // from Checkout (/api/checkout/confirm), whichever comes first; or, in local development with
 // DEV_FAKE_PAYMENTS=1 and no Stripe key, right away.
 
-/** Applies a paid Checkout session exactly once. Returns false if it was already applied. */
+/** Applies a paid Checkout session exactly once. Returns false if it was already applied (or is being applied). */
 export async function fulfillCheckoutSession(s: Stripe.Checkout.Session): Promise<boolean> {
   if (s.payment_status !== "paid" && s.payment_status !== "no_payment_required") return false;
   const userId = s.metadata?.userId || s.client_reference_id;
   if (!userId) return false;
   const kind = s.metadata?.kind ?? (s.mode === "subscription" ? "plan" : "addon");
-  const claimed = await sql()`insert into checkout_sessions (id, kind) values (${s.id}, ${kind}) on conflict (id) do nothing returning id`;
+  // Claim the session. A claim left 'pending' by a run that died mid-way can be taken over after 5 minutes.
+  const claimed = await sql()`
+    insert into checkout_sessions (id, kind, status) values (${s.id}, ${kind}, 'pending')
+    on conflict (id) do update set processed_at = now()
+      where checkout_sessions.status = 'pending' and checkout_sessions.processed_at < now() - interval '5 minutes'
+    returning id`;
   if (!claimed.length) return false;
   try {
     const customer = typeof s.customer === "string" ? s.customer : s.customer?.id;
     if (kind === "order" && s.metadata?.orderId) {
-      await markOrderPaid(s.metadata.orderId, s.id);
+      if (!(await markOrderPaid(s.metadata.orderId, s.id))) await refundIfCanceled(s.metadata.orderId, s);
     } else if (s.metadata?.addOnId === "keepsake" && s.metadata.bookId) {
       await unlockKeepsake(s.metadata.bookId, "purchase");
     } else if (s.mode === "subscription" && s.metadata?.planId) {
-      await setUserPlan(userId, s.metadata.planId as PlanId, customer);
+      // Only grant the plan while the subscription is live (an old, since-cancelled session grants nothing).
+      const subId = typeof s.subscription === "string" ? s.subscription : s.subscription?.id;
+      const sub = subId ? await stripe().subscriptions.retrieve(subId) : null;
+      if (sub && ["active", "trialing", "past_due"].includes(sub.status)) await setUserPlan(userId, s.metadata.planId as PlanId, customer);
     } else if (s.metadata?.addOnId === "ai-pack-50") {
       const client = await clerkClient();
       const u = await client.users.getUser(userId);
       const bonus = ((u.privateMetadata as { aiBonus?: number }).aiBonus ?? 0) + 50;
       await client.users.updateUserMetadata(userId, { privateMetadata: { aiBonus: bonus } });
     }
+    await sql()`update checkout_sessions set status = 'done', processed_at = now() where id = ${s.id}`;
     return true;
   } catch (e) {
     await sql()`delete from checkout_sessions where id = ${s.id}`; // let the next delivery retry
@@ -65,11 +75,12 @@ interface OrderRow {
   status: string;
 }
 
+/** Returns false when the order wasn't waiting for payment (already handled, or canceled). */
 export async function markOrderPaid(orderId: string, stripeSessionId?: string) {
   const [order] = await sql()<OrderRow[]>`
     update orders set status = 'paid', stripe_session_id = coalesce(${stripeSessionId ?? null}, stripe_session_id), updated_at = now()
     where id = ${orderId} and status = 'awaiting_payment' returning *`;
-  if (!order) return; // already handled (webhooks can arrive twice)
+  if (!order) return false; // already handled (webhooks can arrive twice)
   await track("order_paid", {
     userId: order.owner_id,
     bookId: order.book_id,
@@ -77,6 +88,16 @@ export async function markOrderPaid(orderId: string, stripeSessionId?: string) {
   });
   if (order.book_id) await unlockKeepsake(order.book_id, "order"); // a printed copy includes the Keepsake unlock
   await submitToPrinter(order);
+  return true;
+}
+
+/** A payment that lands after its order was canceled (the account was deleted mid-checkout) is refunded. */
+async function refundIfCanceled(orderId: string, s: Stripe.Checkout.Session) {
+  const [o] = await sql()<{ status: string }[]>`select status from orders where id = ${orderId}`;
+  const pi = typeof s.payment_intent === "string" ? s.payment_intent : s.payment_intent?.id;
+  if (o?.status !== "canceled" || !pi) return;
+  await stripe().refunds.create({ payment_intent: pi }, { idempotencyKey: `refund-${s.id}` }); // safe to retry
+  await sql()`update orders set error = 'Paid after the order was canceled, so the payment was refunded.', updated_at = now() where id = ${orderId}`;
 }
 
 export async function submitToPrinter(order: OrderRow) {

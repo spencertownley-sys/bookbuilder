@@ -10,7 +10,10 @@ import { isAdultConfirmed } from "./site";
  */
 export async function requirePageUser(path: string) {
   const { userId } = await auth.protect();
-  const user = await currentUser();
+  const user = await currentUser().catch((e: { status?: number }) => {
+    if (e?.status === 404) return null; // account just deleted; its session token hasn't expired yet
+    throw e;
+  });
   if (!user) redirect("/sign-in");
   if (!isAdultConfirmed(user.publicMetadata)) redirect(`/welcome?next=${encodeURIComponent(path)}`);
   const email = user.primaryEmailAddress?.emailAddress ?? "";

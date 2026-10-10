@@ -53,6 +53,10 @@ test("post-login redirects stay on this site", () => {
   expect(safeNext("https://evil.example")).toBe("/dashboard");
   expect(safeNext("//evil.example")).toBe("/dashboard");
   expect(safeNext("/\\evil.example")).toBe("/dashboard");
+  expect(safeNext("/\t/evil.example")).toBe("/dashboard"); // browsers strip tabs: would become //evil.example
+  expect(safeNext("/\n/evil.example")).toBe("/dashboard");
+  expect(safeNext("/%09/evil.example")).toBe("/%09/evil.example"); // still encoded: a same-site path
+  expect(safeNext("/new?x=1#top")).toBe("/new?x=1#top");
   expect(safeNext(null)).toBe("/dashboard");
 });
 

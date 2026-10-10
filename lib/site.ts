@@ -15,7 +15,14 @@ export function isAdultConfirmed(publicMetadata: unknown) {
 
 /** Only allow same-site paths as a post-login destination (no open redirects). */
 export function safeNext(next: string | null | undefined, fallback = "/dashboard") {
-  return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : fallback;
+  // Browsers drop tabs/newlines and treat "\\" like "/", so "/\t/evil.com" would become "//evil.com".
+  if (!next || !next.startsWith("/") || /[\s\\\x00-\x1f\x7f]/.test(next)) return fallback;
+  try {
+    const u = new URL(next, "https://same.invalid");
+    return u.origin === "https://same.invalid" ? u.pathname + u.search + u.hash : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 /** Reasons a share-link viewer can pick when reporting a book. */

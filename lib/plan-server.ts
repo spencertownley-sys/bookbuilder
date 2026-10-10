@@ -8,7 +8,12 @@ import { track } from "./events";
 // so every page can read it without a database (see requirePageUser in lib/page-auth.ts).
 export async function setUserPlan(userId: string, plan: PlanId, stripeCustomerId?: string) {
   const client = await clerkClient();
-  const before = getPlan((await client.users.getUser(userId)).publicMetadata?.plan as string | undefined).id;
+  const user = await client.users.getUser(userId).catch((e: { status?: number }) => {
+    if (e?.status === 404) return null; // account deleted (e.g. Stripe's cancellation webhook after an account deletion)
+    throw e;
+  });
+  if (!user) return;
+  const before = getPlan(user.publicMetadata?.plan as string | undefined).id;
   await client.users.updateUserMetadata(userId, {
     publicMetadata: { plan },
     privateMetadata: stripeCustomerId ? { stripeCustomerId } : {},

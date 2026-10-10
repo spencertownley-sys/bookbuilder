@@ -28,8 +28,9 @@ export async function purgeBook(bookId: string, ownerId: string) {
             and not exists (select 1 from books b where b.owner_id = ${ownerId} and b.id <> ${bookId} and position(f.key in b.data::text) > 0)`
       ).map((r) => r.key)
     : [];
-  await sql()`delete from books where id = ${bookId} and owner_id = ${ownerId}`; // cascades to links, notes, recordings
+  // Files first: if storage fails, the rows (and their keys) are still here for the retry.
   await deleteFiles([...deletable, ...recs.map((r) => r.file_key)]);
+  await sql()`delete from books where id = ${bookId} and owner_id = ${ownerId}`; // cascades to links, notes, recordings
   return true; // events hold no book content, so metrics keep counting the deleted book
 }
 
@@ -54,12 +55,16 @@ export async function purgeUser(userId: string) {
   await sql()`update events set user_id = null where user_id = ${userId}`; // aggregate metrics stay, the person doesn't
 }
 
-/** Cancels any Stripe subscription right away (used when the account is deleted). */
+/**
+ * Cancels any Stripe subscription right away (used when the account is deleted). Works after the Clerk
+ * user is gone too: checkout puts the user id in each subscription's metadata, so we can search for it.
+ */
 export async function cancelSubscriptions(userId: string) {
-  if (!process.env.STRIPE_SECRET_KEY) return;
+  if (!process.env.STRIPE_SECRET_KEY || !/^[\w-]+$/.test(userId)) return;
   const user = await (await clerkClient()).users.getUser(userId).catch(() => null);
   const customer = (user?.privateMetadata as { stripeCustomerId?: string } | undefined)?.stripeCustomerId;
-  if (!customer) return;
-  const subs = await stripe().subscriptions.list({ customer, status: "all", limit: 20 });
-  for (const s of subs.data) if (!["canceled", "incomplete_expired"].includes(s.status)) await stripe().subscriptions.cancel(s.id);
+  const subs = customer
+    ? (await stripe().subscriptions.list({ customer, status: "all", limit: 20 })).data
+    : (await stripe().subscriptions.search({ query: `metadata['userId']:'${userId}'`, limit: 20 })).data;
+  for (const s of subs) if (!["canceled", "incomplete_expired"].includes(s.status)) await stripe().subscriptions.cancel(s.id);
 }

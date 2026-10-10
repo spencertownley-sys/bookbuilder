@@ -12,6 +12,9 @@ export const POST = route(async (req: Request) => {
   const s = await stripe().checkout.sessions.retrieve(sessionId);
   if ((s.metadata?.userId || s.client_reference_id) !== userId) throw new HttpError(404, "We couldn't find that checkout.");
   const paid = s.payment_status === "paid" || s.payment_status === "no_payment_required";
-  if (paid) await fulfillCheckoutSession(s);
+  // Only fresh sessions: an old session id (e.g. from browser history) can't be replayed for a plan or credits.
+  // Anything older was already delivered by Stripe's webhook, which retries for days.
+  const fresh = Date.now() / 1000 - s.created < 24 * 3600;
+  if (paid && fresh) await fulfillCheckoutSession(s);
   return json({ paid, kind: s.metadata?.kind ?? null, bookId: s.metadata?.bookId || null, orderId: s.metadata?.orderId || null });
 });

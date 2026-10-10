@@ -97,8 +97,10 @@ alter table orders add column if not exists print_cost_cents integer; -- Lulu's 
 create table if not exists checkout_sessions (
   id            text primary key,
   kind          text,
-  processed_at  timestamptz not null default now()
+  processed_at  timestamptz not null default now(),
+  status        text not null default 'done' -- 'pending' while being fulfilled; reclaimable if it stalls
 );
+alter table checkout_sessions add column if not exists status text not null default 'done';
 
 -- Reports from authors (about a note) and from share-link viewers (about a book).
 create table if not exists reports (
