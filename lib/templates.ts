@@ -36,8 +36,11 @@ export const STICKERS: TemplateAsset[] = [
   el("books", "Books & apple"),
 ];
 
-// Optional asset base (lets the standalone demo point at a different host).
+// Optional asset base or inlined map (lets the standalone demo point at a different host, or carry
+// its art inside a single file).
 export function assetUrl(src: string): string {
-  const base = (globalThis as { __ASSET_BASE__?: string }).__ASSET_BASE__ ?? "";
+  const g = globalThis as { __ASSET_BASE__?: string; __ASSET_MAP__?: Record<string, string> };
+  if (g.__ASSET_MAP__?.[src]) return g.__ASSET_MAP__[src];
+  const base = g.__ASSET_BASE__ ?? "";
   return base ? base + src.replace(/^\//, "") : src;
 }
