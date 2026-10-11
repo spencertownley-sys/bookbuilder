@@ -45,12 +45,13 @@ export function Preview({ onClose, recordings, bookOverride }: { onClose: () => 
 }
 
 export function Flipbook({
-  book, recordings, onClose, footer,
+  book, recordings, onClose, footer, topAction,
 }: {
   book: Book;
   recordings: RecordingMap;
   onClose?: () => void;
   footer?: (pageId: string) => React.ReactNode;
+  topAction?: React.ReactNode;
 }) {
   const [i, setI] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -86,7 +87,7 @@ export function Flipbook({
       a.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
       return;
     }
-    const text = p.elements.filter((e): e is TextEl => e.type === "text").map((e) => fillTokens(e.text, book.hero)).join(". ");
+    const text = pageText(book, p);
     if (!text || !window.speechSynthesis) return;
     const u = new SpeechSynthesisUtterance(text);
     u.rate = 0.9;
@@ -103,16 +104,20 @@ export function Flipbook({
   }, [i]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const go = (n: number) => setI(Math.max(0, Math.min(book.pages.length - 1, n)));
+  // One listener for the flipbook's lifetime, reading the latest state through a ref. (Re-adding it on
+  // every render meant a re-render during a keypress could drop that keypress.)
+  const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
+  onKey.current = (e) => {
+    if ((e.target as HTMLElement).closest("input, textarea")) return;
+    if (e.key === "ArrowRight") go(i + 1);
+    if (e.key === "ArrowLeft") go(i - 1);
+    if (e.key === "Escape") onClose?.();
+  };
   useEffect(() => {
-    const k = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest("input, textarea")) return;
-      if (e.key === "ArrowRight") go(i + 1);
-      if (e.key === "ArrowLeft") go(i - 1);
-      if (e.key === "Escape") onClose?.();
-    };
+    const k = (e: KeyboardEvent) => onKey.current(e);
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
-  });
+  }, []);
 
   const d = pageDims(book.trim);
   const scale = Math.min(box.w / d.width, box.h / d.height);
@@ -129,11 +134,14 @@ export function Flipbook({
       <div className="preview-top">
         <strong>{book.title}</strong>
         <span className="hint light">{i === 0 ? "Cover" : `Page ${i} of ${book.pages.length - 1}`}</span>
+        {topAction}
         {onClose && <button className="icon light" onClick={onClose} aria-label="Close">✕</button>}
       </div>
       <div key={p.id} className="flip-in" style={{ width: d.width * scale, height: d.height * scale }}>
         <PageStage book={book} page={p} scale={scale} />
       </div>
+      {/* The page is drawn on a canvas; this gives screen readers its words. */}
+      <p className="sr-only" aria-live="polite" data-testid="page-text">{pageText(book, p)}</p>
       <div className="preview-nav">
         <button className="btn ghost light" disabled={i === 0} onClick={() => go(i - 1)}>‹ Back</button>
         <button className="btn primary" onClick={() => (playing ? (setAutoplay(false), stop()) : play())}>
@@ -144,4 +152,8 @@ export function Flipbook({
       {footer?.(p.id)}
     </div>
   );
+}
+
+function pageText(book: Book, page: Book["pages"][number]) {
+  return page.elements.filter((e): e is TextEl => e.type === "text").map((e) => fillTokens(e.text, book.hero)).join(". ");
 }

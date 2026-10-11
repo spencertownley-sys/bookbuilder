@@ -1,9 +1,10 @@
 import "server-only";
 import { createHmac } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
 import { sql } from "./db";
+import { MEDIA_KEY_RE } from "./media";
 
 // Files (uploaded art, AI art, voice recordings, print PDFs) live in object storage.
 // - Supabase Storage when SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are set (bucket: SUPABASE_BUCKET, default "media")
@@ -63,8 +64,31 @@ export async function putFile(opts: { folder: string; data: ArrayBuffer | Buffer
   return { key, url: mediaUrl(key), mimeType: mime };
 }
 
+const KEY_RE = MEDIA_KEY_RE;
+
+/** Permanently removes files from storage and the files table. Missing files are ignored. */
+export async function deleteFiles(keys: string[]) {
+  const valid = [...new Set(keys)].filter((k) => KEY_RE.test(k));
+  if (!valid.length) return;
+  const sb = supabase();
+  for (let i = 0; i < valid.length; i += 500) {
+    const batch = valid.slice(i, i + 500);
+    if (sb) {
+      const r = await fetch(`${sb.url}/storage/v1/object/${BUCKET}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${sb.key}`, apikey: sb.key, "Content-Type": "application/json" },
+        body: JSON.stringify({ prefixes: batch }),
+      });
+      if (!r.ok) throw new Error(`Storage delete failed (${r.status}): ${await r.text()}`);
+    } else {
+      await Promise.all(batch.map((k) => rm(path.join(LOCAL_DIR, k), { force: true })));
+    }
+    await sql()`delete from files where key in ${sql()(batch)}`;
+  }
+}
+
 export async function getFile(key: string): Promise<{ data: Buffer; mimeType: string } | null> {
-  if (!/^[a-z0-9-]+\/[A-Za-z0-9_-]{24}\.[a-z0-9]+$/.test(key)) return null;
+  if (!KEY_RE.test(key)) return null;
   const [row] = await sql()<{ mime_type: string }[]>`select mime_type from files where key = ${key}`;
   if (!row) return null;
   const sb = supabase();

@@ -43,9 +43,9 @@ export const POST = route(async (req: Request) => {
   const id = "ord_" + nanoid(14);
   await sql()`
     insert into orders (id, owner_id, book_id, book_title, format, pod_package_id, page_count, quantity, shipping_level,
-                        ship_to, contact_email, price_cents, shipping_cents, interior_key, cover_key)
+                        ship_to, contact_email, price_cents, shipping_cents, interior_key, cover_key, print_cost_cents)
     values (${id}, ${userId}, ${row.id}, ${row.title}, ${b.format}, ${q.podPackageId}, ${q.pages}, ${q.quantity}, ${b.shippingLevel},
-            ${sql().json(b.shipTo as never)}, ${email}, ${q.itemsCents}, ${q.shippingCents}, ${b.interiorKey}, ${b.coverKey})`;
+            ${sql().json(b.shipTo as never)}, ${email}, ${q.itemsCents}, ${q.shippingCents}, ${b.interiorKey}, ${b.coverKey}, ${q.printCostCents ?? null})`;
 
   if (fakePayments()) {
     await markOrderPaid(id, "dev_fake");
@@ -72,7 +72,7 @@ export const POST = route(async (req: Request) => {
       },
     ],
     automatic_tax: { enabled: process.env.STRIPE_AUTOMATIC_TAX === "true" },
-    success_url: `${appUrl()}/orders?placed=${id}`,
+    success_url: `${appUrl()}/orders?placed=${id}&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${appUrl()}/editor/${row.id}?order=canceled`,
   });
   await sql()`update orders set stripe_session_id = ${session.id} where id = ${id}`;

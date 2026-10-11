@@ -33,14 +33,20 @@ const LABEL: Record<string, string> = {
 export default function OrdersClient({ devTools }: { devTools: boolean }) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [placed, setPlaced] = useState<string | null>(null);
+  const [err, setErr] = useState("");
   const load = async () => {
-    const r = await fetch("/api/orders");
-    if (r.ok) setOrders((await r.json()).orders);
+    const r = await fetch("/api/orders").catch(() => null);
+    if (r?.ok) setOrders((await r.json()).orders);
+    else setErr("Couldn't load your orders. Check your connection and reload the page.");
   };
   useEffect(() => {
-    setPlaced(new URLSearchParams(location.search).get("placed"));
-    load();
-  }, []);
+    const q = new URLSearchParams(location.search);
+    setPlaced(q.get("placed"));
+    const sid = q.get("session_id");
+    // Back from checkout: confirm the payment so the order shows as paid right away.
+    (sid ? postJson("/api/checkout/confirm", { sessionId: sid }).catch(() => null) : Promise.resolve()).then(load);
+    if (sid) history.replaceState(null, "", `/orders?placed=${q.get("placed") ?? ""}`);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const sim = async (id: string, status: string) => {
     await postJson("/api/dev/simulate-print", { orderId: id, status });
     load();
@@ -54,7 +60,8 @@ export default function OrdersClient({ devTools }: { devTools: boolean }) {
         <a className="btn ghost" href="/dashboard">My books</a>
       </div>
       {placed && <p className="notice">Thank you! Your order is placed. We&apos;ll email you when it ships.</p>}
-      {!orders && <p className="hint">Loading orders…</p>}
+      {err && <p className="err" role="alert">{err}</p>}
+      {!orders && !err && <p className="hint">Loading orders…</p>}
       {orders?.length === 0 && <p className="hint">No printed copies yet. Open a book and choose Print &amp; publish to order one.</p>}
       <div className="orders">
         {orders?.map((o) => {

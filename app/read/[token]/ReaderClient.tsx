@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import type { Book } from "@/lib/book";
 import type { RecordingMap } from "@/components/editor/Dialogs";
+import { REPORT_REASONS } from "@/lib/site";
 
 const Flipbook = dynamic(() => import("@/components/editor/Dialogs").then((m) => m.Flipbook), { ssr: false });
 
@@ -69,15 +70,75 @@ function Reactions({ token, pageId, hearts, onHeart }: { token: string; pageId: 
   );
 }
 
+function ReportBook({ token }: { token: string }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState<string>("");
+  const [details, setDetails] = useState("");
+  const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
+  const [err, setErr] = useState("");
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reason) return setErr("Choose a reason.");
+    setState("sending");
+    setErr("");
+    const r = await fetch(`/api/share/${token}/report`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason, details }) }).catch(() => null);
+    const j = await r?.json().catch(() => ({}));
+    if (!r?.ok) {
+      setErr(j?.error ?? "Couldn't send the report. Please try again.");
+      return setState("idle");
+    }
+    setState("sent");
+  };
+  return (
+    <>
+      <button className="btn ghost light small" onClick={() => setOpen(true)}>Report</button>
+      {open && (
+        <div className="modal-back" onClick={() => setOpen(false)}>
+          <form className="modal small report-form" onClick={(e) => e.stopPropagation()} onSubmit={send} role="dialog" aria-modal="true" aria-labelledby="report-title">
+            {state === "sent" ? (
+              <>
+                <h3 id="report-title">Thank you</h3>
+                <p className="hint">We&apos;ll review this book. If it breaks our content policy we&apos;ll take it down.</p>
+                <button type="button" className="btn primary wide" onClick={() => setOpen(false)}>Close</button>
+              </>
+            ) : (
+              <>
+                <h3 id="report-title">Report this book</h3>
+                <p className="hint">Tell us what&apos;s wrong. The author won&apos;t see who reported it.</p>
+                <div className="reasons" role="radiogroup" aria-label="Reason">
+                  {REPORT_REASONS.map((r) => (
+                    <label key={r} className="check">
+                      <input type="radio" name="reason" value={r} checked={reason === r} onChange={() => (setReason(r), setErr(""))} />
+                      <span>{r}</span>
+                    </label>
+                  ))}
+                </div>
+                <textarea rows={3} maxLength={1000} placeholder="Anything else we should know (optional)" value={details} onChange={(e) => setDetails(e.target.value)} />
+                {err && <p className="err" role="alert">{err}</p>}
+                <div className="form-actions">
+                  <button type="button" className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
+                  <button type="submit" className="btn primary" disabled={state === "sending"}>{state === "sending" ? "Sending…" : "Send report"}</button>
+                </div>
+              </>
+            )}
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function ReaderClient({ token }: { token: string }) {
   const [data, setData] = useState<Shared | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
-    fetch(`/api/share/${token}`).then(async (r) => {
-      const j = await r.json();
-      if (!r.ok) setErr(j.error ?? "This book isn't available.");
-      else setData(j);
-    });
+    fetch(`/api/share/${token}`)
+      .then(async (r) => {
+        const j = await r.json();
+        if (!r.ok) setErr(j.error ?? "This book isn't available.");
+        else setData(j);
+      })
+      .catch(() => setErr("We couldn't open this book. Check your connection and try again."));
   }, [token]);
 
   if (err)
@@ -92,6 +153,7 @@ export default function ReaderClient({ token }: { token: string }) {
     <Flipbook
       book={data.book}
       recordings={data.recordings}
+      topAction={<ReportBook token={token} />}
       footer={(pageId) => (
         <Reactions
           token={token}

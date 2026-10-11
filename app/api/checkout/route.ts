@@ -46,7 +46,11 @@ export const POST = route(async (req: Request) => {
     subscription_data: mode === "subscription" ? { metadata: { userId, planId: body.planId ?? "" } } : undefined,
     allow_promotion_codes: true,
     automatic_tax: { enabled: process.env.STRIPE_AUTOMATIC_TAX === "true" },
-    success_url: kind === "keepsake" ? `${appUrl()}/editor/${body.bookId}?unlocked=1` : `${appUrl()}/dashboard?upgraded=1`,
+    // {CHECKOUT_SESSION_ID} is filled in by Stripe; the page confirms the session on return (api/checkout/confirm).
+    success_url:
+      kind === "keepsake"
+        ? `${appUrl()}/editor/${body.bookId}?unlocked=1&session_id={CHECKOUT_SESSION_ID}`
+        : `${appUrl()}/dashboard?upgraded=1&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: kind === "keepsake" ? `${appUrl()}/editor/${body.bookId}` : `${appUrl()}/pricing`,
   });
   return json({ url: session.url });

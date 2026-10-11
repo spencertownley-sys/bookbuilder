@@ -13,6 +13,7 @@ export interface Quote {
   shippingCents: number;
   totalCents: number;
   shippingEstimated: boolean;
+  printCostCents?: number; // what Lulu charges us incl. shipping and tax, when Lulu is connected
 }
 
 /** Customer price: our retail price per book + shipping at Lulu's cost (or a flat estimate before Lulu is connected). */
@@ -25,13 +26,16 @@ export async function quote(format: PrintFormat, bookPages: number, quantity: nu
   const unit = unitPriceCents(format, bookPages);
   let shipping = SHIPPING[level].fallbackCents + (quantity - 1) * 150;
   let estimated = true;
+  let printCost: number | undefined;
   if (shipTo && luluConfigured() && !validateShipTo(shipTo)) {
     try {
-      shipping = (await luluCost(pod, pages, quantity, shipTo, level)).shippingCents;
+      const cost = await luluCost(pod, pages, quantity, shipTo, level);
+      shipping = cost.shippingCents;
+      printCost = cost.totalCents;
       estimated = false;
     } catch {
       // keep the estimate; Lulu's exact figure is fetched again at checkout
     }
   }
-  return { format, quantity, pages, podPackageId: pod, unitCents: unit, itemsCents: unit * quantity, shippingCents: shipping, totalCents: unit * quantity + shipping, shippingEstimated: estimated };
+  return { format, quantity, pages, podPackageId: pod, unitCents: unit, itemsCents: unit * quantity, shippingCents: shipping, totalCents: unit * quantity + shipping, shippingEstimated: estimated, printCostCents: printCost };
 }

@@ -25,12 +25,14 @@ export default function RecordClient({ token }: { token: string }) {
     try {
       setName(localStorage.getItem("bb-reader-name") ?? "");
     } catch {}
-    fetch(`/api/share/${token}`).then(async (r) => {
-      const j = await r.json();
-      if (!r.ok || j.kind !== "record") return setErr(j.error ?? "This recording link isn't active.");
-      setBook(j.book);
-      setRecs(j.recordings);
-    });
+    fetch(`/api/share/${token}`)
+      .then(async (r) => {
+        const j = await r.json();
+        if (!r.ok || j.kind !== "record") return setErr(j.error ?? "This recording link isn't active.");
+        setBook(j.book);
+        setRecs(j.recordings);
+      })
+      .catch(() => setErr("We couldn't open this book. Check your connection and try again."));
   }, [token]);
 
   if (err) return <div className="loading" style={{ padding: 24, textAlign: "center" }}>{err}</div>;

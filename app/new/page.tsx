@@ -1,9 +1,11 @@
 import SiteNav from "@/components/SiteNav";
+import { requirePageUser } from "@/lib/page-auth";
 import NewBookClient from "./NewBookClient";
 
 export const metadata = { title: "Start a book — Book Builder" };
 
-export default function NewBook() {
+export default async function NewBook() {
+  await requirePageUser("/new");
   return (
     <>
       <SiteNav />

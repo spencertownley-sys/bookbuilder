@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { sql } from "./db";
 import { getPlan, Plan } from "./plans";
+import { isAdultConfirmed } from "./site";
 import type { Book } from "./book";
 
 export class HttpError extends Error {
@@ -28,14 +29,20 @@ export function route<A extends unknown[]>(fn: (...args: A) => Promise<Response>
   };
 }
 
-export async function requireUser(): Promise<{ userId: string; plan: Plan; email?: string }> {
+export async function requireUser(opts: { allowUnconfirmed?: boolean } = {}): Promise<{ userId: string; plan: Plan; email?: string; createdAt: number }> {
   const { userId } = await auth();
   if (!userId) throw new HttpError(401, "Please sign in first.");
-  const user = await (await clerkClient()).users.getUser(userId);
+  // A just-deleted account still has a valid session token for up to a minute: treat it as signed out.
+  const user = await (await clerkClient()).users.getUser(userId).catch((e: { status?: number }) => {
+    throw e?.status === 404 ? new HttpError(401, "Please sign in first.") : e;
+  });
+  if (!opts.allowUnconfirmed && !isAdultConfirmed(user.publicMetadata))
+    throw new HttpError(403, "Please confirm you're 18 or older before making books. Reload the page to continue.");
   return {
     userId,
     plan: getPlan(user.publicMetadata?.plan as string | undefined),
     email: user.primaryEmailAddress?.emailAddress,
+    createdAt: user.createdAt,
   };
 }
 

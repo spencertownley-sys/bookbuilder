@@ -6,6 +6,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test": "playwright test -c playwright.unit.config.ts",
+    "test:e2e": "playwright test",
     "build:demo": "node scripts/build-demo.mjs",
     "db": "node scripts/dev-db.mjs",
     "db:migrate": "node scripts/migrate.mjs"
@@ -25,8 +27,11 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@clerk/backend": "3.23.2",
+    "@clerk/testing": "2.2.45",
     "@electric-sql/pglite": "^0.5.8",
     "@electric-sql/pglite-socket": "^0.2.11",
+    "@playwright/test": "1.56.1",
     "@types/node": "^26.6.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

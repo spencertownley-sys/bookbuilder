@@ -1,12 +1,16 @@
 import { sql } from "@/lib/db";
 import { getActiveLink, json, route } from "@/lib/server";
 import { mediaUrl } from "@/lib/storage";
+import { auth } from "@clerk/nextjs/server";
+import { trackOncePerBook } from "@/lib/events";
 import type { Book } from "@/lib/book";
 
 // Public: what a family member sees through a share or record link. No sign-in.
 export const GET = route(async (_req: Request, { params }: { params: Promise<{ token: string }> }) => {
   const link = await getActiveLink((await params).token);
-  const [row] = await sql()<{ data: Book }[]>`select data from books where id = ${link.book_id}`;
+  const [row] = await sql()<{ data: Book; owner_id: string }[]>`select data, owner_id from books where id = ${link.book_id}`;
+  const { userId } = await auth();
+  if (link.kind === "read" && userId !== row.owner_id) await trackOncePerBook("share_opened", link.book_id);
   const recs = await sql()<{ page_id: string; file_key: string; recorded_by: string | null }[]>`
     select page_id, file_key, recorded_by from recordings where book_id = ${link.book_id}`;
   const hearts = await sql()<{ page_id: string; n: number }[]>`

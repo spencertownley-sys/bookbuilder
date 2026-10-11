@@ -1,13 +1,12 @@
-// Next.js 16 renamed middleware.ts → proxy.ts. Clerk runs here; signed-out visitors to app pages go to sign-in.
-// API routes check sign-in themselves (lib/server.ts) so they can answer with JSON errors.
-// Public on purpose: /, /pricing, /read/*, /record/* (family links), /api/share/*, /api/media/*, webhooks.
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+// Next.js 16 renamed middleware.ts → proxy.ts. Clerk runs here so auth() works everywhere, but the actual
+// checks live next to the data they protect (Clerk's resource-based guidance):
+//   - app pages call requirePageUser() (lib/page-auth.ts): sign-in, then the 18+ confirmation
+//   - API routes call requireUser() (lib/server.ts) so they can answer with JSON errors
+// Public on purpose: /, /pricing, legal pages, /read/* and /record/* (family links), /api/share/*,
+// /api/media/*, webhooks.
+import { clerkMiddleware } from "@clerk/nextjs/server";
 
-const isProtectedPage = createRouteMatcher(["/dashboard(.*)", "/editor(.*)", "/new(.*)", "/orders(.*)"]);
-
-export default clerkMiddleware(async (auth, req) => {
-  if (isProtectedPage(req)) await auth.protect();
-});
+export default clerkMiddleware();
 
 export const config = {
   // /api/files/local is skipped: proxy buffers request bodies (10 MB cap) and print PDFs are bigger.

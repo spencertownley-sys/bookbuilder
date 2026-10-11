@@ -6,5 +6,5 @@ export const POST = route(async (req: Request, { params }: { params: Promise<{ t
   const { token, pageId } = await params;
   const link = await getActiveLink(token, "record");
   const name = new URL(req.url).searchParams.get("name");
-  return json({ recording: await saveRecording(req, link.book_id, pageId, name, null) }, 201);
+  return json({ recording: await saveRecording(req, link.book_id, pageId, name) }, 201);
 });

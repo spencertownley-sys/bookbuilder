@@ -9,8 +9,10 @@ import PrintDialog from "./PrintDialog";
 import { HeroDialog, Preview } from "./Dialogs";
 import { useCurrent, useStore } from "@/lib/store";
 import { TextEl, pageDims } from "@/lib/book";
+import { checkBook, Issue, summarize } from "@/lib/checks";
 import type { Plan } from "@/lib/plans";
 import type { SaveStatus } from "@/lib/sync";
+import { postJson } from "@/lib/api";
 
 export interface CloudInfo {
   bookId: string;
@@ -19,6 +21,8 @@ export interface CloudInfo {
   keepsakeUnlocked: boolean;
   setKeepsake: (v: boolean) => void;
   reload: () => Promise<boolean>;
+  saveNow: () => Promise<void>;
+  keepMine: () => Promise<void>;
 }
 
 export interface EditorProps {
@@ -65,6 +69,7 @@ export default function Editor({ plan, services, shelfHref = "/dashboard", prici
   const [scale, setScale] = useState(0.5);
   const [family, setFamily] = useState<FamilyData>({ notes: [], recordings: {} });
   const [toast, setToast] = useState("");
+  const [issues, setIssues] = useState<Issue[] | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
 
@@ -78,12 +83,19 @@ export default function Editor({ plan, services, shelfHref = "/dashboard", prici
     loadFamily();
   }, [loadFamily]);
 
-  // Messages from checkout redirects.
+  // Back from checkout: confirm the payment with the server, then show the book's real unlock state.
   useEffect(() => {
     const q = new URLSearchParams(location.search);
-    if (q.get("unlocked")) {
-      cloud?.setKeepsake(true);
-      setToast("Unlocked! This book now exports print-ready with no watermark.");
+    if (q.get("unlocked") && cloud) {
+      const sid = q.get("session_id");
+      (async () => {
+        if (sid) await postJson("/api/checkout/confirm", { sessionId: sid }).catch(() => null);
+        const j = await fetch(`/api/books/${cloud.bookId}`).then((r) => r.json()).catch(() => null);
+        if (j?.keepsakeUnlocked) {
+          cloud.setKeepsake(true);
+          setToast("Unlocked! This book now exports print-ready with no watermark.");
+        } else setToast("Payment received. The unlock can take a minute; reload the page if it hasn't appeared.");
+      })();
     }
     if (q.get("order") === "canceled") setToast("Checkout was canceled. Nothing was charged.");
     if (q.has("unlocked") || q.has("order")) history.replaceState(null, "", location.pathname);
@@ -105,6 +117,17 @@ export default function Editor({ plan, services, shelfHref = "/dashboard", prici
       setHeroOpen(true);
   }, [book?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Live print check: re-run a moment after edits stop, so problems show before they cost money.
+  useEffect(() => {
+    if (!book) return;
+    let alive = true;
+    const t = setTimeout(() => checkBook(book).then((x) => alive && setIssues(x)).catch(() => {}), 1200);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [book?.pages, book?.hero, book?.trim]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Fit the page to the available space.
   const d = book ? pageDims(book.trim) : null;
   useLayoutEffect(() => {
@@ -122,10 +145,11 @@ export default function Editor({ plan, services, shelfHref = "/dashboard", prici
   }, [d?.width, d?.height, mobile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard shortcuts.
+  const dialogOpen = preview || printOpen || heroOpen || !!upsell;
   const onKey = useCallback(
     (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest("input, textarea, select, [contenteditable]")) return;
+      if (dialogOpen || t.closest("input, textarea, select, [contenteditable]")) return; // never edit the page behind a dialog
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -151,7 +175,7 @@ export default function Editor({ plan, services, shelfHref = "/dashboard", prici
         s.updateElement(el.id, { x: el.x + dx, y: el.y + dy });
       }
     },
-    [s, page],
+    [s, page, dialogOpen],
   );
   useEffect(() => {
     window.addEventListener("keydown", onKey);
@@ -166,16 +190,32 @@ export default function Editor({ plan, services, shelfHref = "/dashboard", prici
   const atPageLimit = book.pages.length >= pageLimit;
   const tabs = PANEL_TABS.filter((t) => t.id !== "family" || cloud);
   const notesByPage = family.notes.reduce<Record<string, number>>((a, n) => ((a[n.page_id] = (a[n.page_id] ?? 0) + 1), a), {});
+  const check = summarize(issues);
 
   return (
     <div className={"editor" + (mobile ? " mobile" : "")}>
       <header className="topbar">
         <a href={shelfHref} className="logo-sm" aria-label="Back to my books">📚</a>
         <input className="title-input" value={book.title} onChange={(e) => s.updateBookMeta({ title: e.target.value })} aria-label="Book title" />
-        {cloud && (
-          <span className={"save-pill " + cloud.status} role="status" title={cloud.error ?? undefined}>
-            {SAVE_LABEL[cloud.status]}
-          </span>
+        {cloud &&
+          (cloud.status === "error" || cloud.status === "offline" ? (
+            <button className={"save-pill " + cloud.status} onClick={() => cloud.saveNow()} title={cloud.error ?? "Tap to try saving again"}>
+              {SAVE_LABEL[cloud.status]} · retry
+            </button>
+          ) : (
+            <span className={"save-pill " + cloud.status} role="status" title={cloud.error ?? undefined}>
+              {SAVE_LABEL[cloud.status]}
+            </span>
+          ))}
+        {check && (
+          <button
+            className={"check-chip " + (check.block ? "block" : check.warn ? "warn" : "ok")}
+            onClick={() => setPrintOpen(true)}
+            title="Print check: problems the printer would notice"
+            aria-label={check.block ? `${check.block} print problems to fix` : check.warn ? `${check.warn} print warnings` : "Print check passed"}
+          >
+            {check.block ? `⛔ ${check.block}${mobile ? "" : " to fix"}` : check.warn ? `⚠️ ${check.warn}${mobile ? "" : " to check"}` : `✓${mobile ? "" : " Print-ready"}`}
+          </button>
         )}
         <div className="top-actions">
           <button className="icon" onClick={s.undo} title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
@@ -193,7 +233,11 @@ export default function Editor({ plan, services, shelfHref = "/dashboard", prici
 
       {cloud?.status === "conflict" && (
         <div className="banner" role="alert">
-          This book was changed on another device. <button className="btn small primary" onClick={() => cloud.reload()}>Load the latest version</button>
+          <span>This book was changed on another device.</span>
+          <span className="banner-actions">
+            <button className="btn small primary" onClick={() => cloud.reload()}>Load the latest version</button>
+            <button className="btn small ghost" onClick={() => cloud.keepMine()} title="Save this copy over the other device's changes">Keep my version</button>
+          </span>
         </div>
       )}
 
@@ -266,6 +310,7 @@ export default function Editor({ plan, services, shelfHref = "/dashboard", prici
             </button>
             <span className="pnum">
               {i === 0 ? "Cover" : i}
+              {check?.pages.has(i) && <span className="thumb-flag" title="Print check found something on this page"> ⚠️</span>}
               {family.recordings[p.id] && <span title="Has a voice recording"> 🎙</span>}
               {notesByPage[p.id] ? <span title="Family reactions"> 💌{notesByPage[p.id]}</span> : null}
             </span>
